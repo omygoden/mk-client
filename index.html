@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Antigravity Markdown</title>
+  <!-- Lucide Icons (Local) -->
+  <script defer src="./node_modules/lucide/dist/umd/lucide.min.js"></script>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="theme-dark">
+  <script>
+    (function() {
+      const savedTheme = localStorage.getItem('markdown-theme') || 'theme-dark';
+      document.body.className = savedTheme;
+      if (navigator.userAgent.indexOf('Mac') !== -1) {
+        document.body.classList.add('darwin');
+      }
+    })();
+  </script>
+  <!-- Custom Titlebar -->
+  <header class="app-header">
+    <div class="header-drag-region"></div>
+    <div class="header-left">
+      <div class="app-logo">
+        <i data-lucide="edit-3"></i>
+      </div>
+      <span class="app-title">Antigravity Markdown</span>
+    </div>
+    
+    <div class="header-center">
+      <span id="current-filename" class="filename">Untitled.md</span>
+      <span id="unsaved-indicator" class="unsaved-dot" style="display: none;"></span>
+    </div>
+    
+    <div class="header-right">
+      <!-- These will match Electron's title bar overlay on Windows, but they are here as custom controls if needed -->
+      <button id="btn-minimize" class="titlebar-btn" title="Minimize"><i data-lucide="minus"></i></button>
+      <button id="btn-maximize" class="titlebar-btn" title="Maximize"><i data-lucide="square"></i></button>
+      <button id="btn-close" class="titlebar-btn titlebar-btn-close" title="Close"><i data-lucide="x"></i></button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <div class="app-container">
+    
+    <!-- Sidebar -->
+    <aside id="app-sidebar" class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-tabs">
+          <button id="tab-files" class="sidebar-tab active" title="File Explorer">
+            <i data-lucide="folder-open"></i>
+            <span>Files</span>
+          </button>
+          <button id="tab-outline" class="sidebar-tab" title="Document Outline">
+            <i data-lucide="list"></i>
+            <span>Outline</span>
+          </button>
+        </div>
+        <button id="btn-toggle-sidebar" class="sidebar-toggle-btn" title="Collapse Sidebar">
+          <i data-lucide="chevron-left"></i>
+        </button>
+      </div>
+
+      <!-- Files Tab Content -->
+      <div id="pane-files" class="sidebar-pane active">
+        <div class="pane-actions">
+          <button id="btn-open-folder" class="pane-btn" title="Open Folder">
+            <i data-lucide="folder-plus"></i> Open Folder
+          </button>
+          <button id="btn-new-file-sidebar" class="pane-btn" title="New File" style="display: none;">
+            <i data-lucide="plus"></i>
+          </button>
+        </div>
+        <div class="pane-sort-container" id="pane-sort-container" style="display: none;">
+          <div class="sort-selector">
+            <i data-lucide="arrow-up-down"></i>
+            <select id="sort-dropdown" title="Sort Files">
+              <option value="name">文件名</option>
+              <option value="birthtime">创建时间</option>
+              <option value="mtime">更新时间</option>
+              <option value="size">文件大小</option>
+            </select>
+          </div>
+        </div>
+        <div id="dir-tree" class="dir-tree">
+          <div class="tree-placeholder">
+            <i data-lucide="folder"></i>
+            <p>No folder opened</p>
+            <button id="btn-open-folder-placeholder" class="btn-primary">Open Folder</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Outline Tab Content -->
+      <div id="pane-outline" class="sidebar-pane">
+        <div id="outline-view" class="outline-view">
+          <div class="outline-placeholder">
+            <p>No headers found in document</p>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Sidebar Collapsed Toggle Handle -->
+    <div id="sidebar-expand-handle" class="sidebar-expand-handle" title="Expand Sidebar">
+      <i data-lucide="chevron-right"></i>
+    </div>
+
+    <!-- Main Workspace -->
+    <main class="workspace">
+      
+      <!-- Toolbar -->
+      <section class="toolbar">
+        <div class="toolbar-group">
+          <!-- File operations -->
+          <button id="btn-new-file" class="toolbar-btn" title="New File (Ctrl+N)">
+            <i data-lucide="file-plus"></i>
+          </button>
+          <button id="btn-open-file" class="toolbar-btn" title="Open File (Ctrl+O)">
+            <i data-lucide="file-symlink"></i>
+          </button>
+          <button id="btn-save-file" class="toolbar-btn" title="Save File (Ctrl+S)">
+            <i data-lucide="save"></i>
+          </button>
+          <div class="divider"></div>
+          <!-- View Modes -->
+          <button id="btn-mode-edit" class="toolbar-btn active" title="Editor Mode (Ctrl+1)">
+            <i data-lucide="code-2"></i>
+          </button>
+          <button id="btn-mode-split" class="toolbar-btn" title="Split Screen Mode (Ctrl+2)">
+            <i data-lucide="columns"></i>
+          </button>
+          <button id="btn-mode-preview" class="toolbar-btn" title="Live Preview Mode (Ctrl+3)">
+            <i data-lucide="eye"></i>
+          </button>
+          <button id="btn-mode-live" class="toolbar-btn" title="Live Write Mode (Ctrl+4)">
+            <i data-lucide="feather"></i>
+          </button>
+        </div>
+
+        <div class="toolbar-group">
+          <!-- Markdown Formatting Helpers -->
+          <button id="format-bold" class="toolbar-btn" title="Bold (Ctrl+B)">
+            <i data-lucide="bold"></i>
+          </button>
+          <button id="format-italic" class="toolbar-btn" title="Italic (Ctrl+I)">
+            <i data-lucide="italic"></i>
+          </button>
+          <button id="format-heading" class="toolbar-btn" title="Heading (Ctrl+H)">
+            <i data-lucide="heading"></i>
+          </button>
+          <button id="format-code" class="toolbar-btn" title="Code Block">
+            <i data-lucide="code"></i>
+          </button>
+          <button id="format-link" class="toolbar-btn" title="Insert Link (Ctrl+K)">
+            <i data-lucide="link"></i>
+          </button>
+          <button id="format-image" class="toolbar-btn" title="Insert Image">
+            <i data-lucide="image"></i>
+          </button>
+          <button id="format-table" class="toolbar-btn" title="Insert Table">
+            <i data-lucide="table"></i>
+          </button>
+          <div class="divider"></div>
+          <!-- Distraction-free features -->
+          <button id="btn-typewriter" class="toolbar-btn" title="Typewriter Mode (Keep cursor center)">
+            <i data-lucide="target"></i>
+          </button>
+          <button id="btn-zen" class="toolbar-btn" title="Zen Mode (Distraction-free)">
+            <i data-lucide="maximize-2"></i>
+          </button>
+        </div>
+
+        <div class="toolbar-group">
+          <!-- Theme & Export -->
+          <div class="theme-selector">
+            <i data-lucide="palette"></i>
+            <select id="theme-dropdown" title="Select Theme">
+              <option value="theme-dark">Night Owl</option>
+              <option value="theme-light">Classic Light</option>
+              <option value="theme-nord">Nordic Frost</option>
+              <option value="theme-sepia">Sepia Paper</option>
+            </select>
+          </div>
+          <div class="export-dropdown">
+            <button id="btn-export-menu" class="btn-secondary" title="Export Document">
+              <i data-lucide="download"></i>
+              <span>Export</span>
+            </button>
+            <div id="export-options" class="dropdown-content">
+              <button id="btn-export-pdf"><i data-lucide="file-text"></i> Export to PDF</button>
+              <button id="btn-export-html"><i data-lucide="html5"></i> Export to HTML</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Editor & Preview Panel -->
+      <section class="editor-pane-container">
+        <!-- Text Editor -->
+        <div id="editor-container" class="editor-subpane">
+          <!-- Find / Replace Bar -->
+          <div id="find-bar" class="find-bar" style="display:none;">
+            <div class="find-bar-inner">
+              <div class="find-input-group">
+                <i data-lucide="search" class="find-icon"></i>
+                <input type="text" id="find-input" placeholder="查找内容..." autocomplete="off" spellcheck="false">
+                <span id="find-count" class="find-count"></span>
+              </div>
+              <div class="find-input-group">
+                <i data-lucide="replace" class="find-icon"></i>
+                <input type="text" id="replace-input" placeholder="替换为..." autocomplete="off" spellcheck="false">
+              </div>
+              <div class="find-actions">
+                <button id="find-prev" class="find-btn" title="上一个 (Shift+Enter)"><i data-lucide="chevron-up"></i></button>
+                <button id="find-next" class="find-btn" title="下一个 (Enter)"><i data-lucide="chevron-down"></i></button>
+                <button id="find-replace-one" class="find-btn" title="替换当前"><i data-lucide="corner-down-right"></i></button>
+                <button id="find-replace-all" class="find-btn find-btn-replace-all" title="替换全部">全替换</button>
+                <label class="find-option" title="区分大小写">
+                  <input type="checkbox" id="find-case-sensitive"> Aa
+                </label>
+                <label class="find-option" title="正则表达式">
+                  <input type="checkbox" id="find-use-regex"> .*
+                </label>
+                <button id="find-close" class="find-btn find-close-btn" title="关闭 (Esc)"><i data-lucide="x"></i></button>
+              </div>
+            </div>
+          </div>
+          <textarea id="markdown-textarea" placeholder="Start writing your Markdown content here... 
+
+Use standard Markdown syntax like:
+# Heading 1
+## Heading 2
+- Bullet points
+1. Numbered lists
+* **Bold** and *Italic* text
+* `Inline code` or code blocks:
+
+```javascript
+console.log('Hello World');
+```
+"></textarea>
+        </div>
+
+        <!-- HTML Preview -->
+        <div id="preview-container" class="editor-subpane hidden">
+          <div id="preview-content" class="markdown-body">
+            <!-- Rendered Markdown goes here -->
+          </div>
+        </div>
+      </section>
+
+      <!-- Status Bar -->
+      <footer class="status-bar">
+        <div class="status-left">
+          <span id="current-filepath-status">No File Open</span>
+        </div>
+        <div class="status-right">
+          <span id="word-count" title="总字数 (Words)">0 words</span>
+          <span class="status-separator">|</span>
+          <span id="chinese-char-count" title="汉字数 (Chinese Characters)">0 汉字</span>
+          <span class="status-separator">|</span>
+          <span id="char-no-spaces-count" title="总字符数 (不含空白) / Characters (no spaces)">0 chars (no spaces)</span>
+          <span class="status-separator">|</span>
+          <span id="char-count" title="总字符数 (含空白) / Characters (with spaces)">0 chars</span>
+          <span class="status-separator">|</span>
+          <span id="read-time" title="预计阅读时间 (Estimated Reading Time)">0 min read</span>
+        </div>
+      </footer>
+    </main>
+
+  </div>
+
+  <!-- Custom Context Menu (file tree) -->
+  <div id="context-menu" class="context-menu" style="display: none;">
+    <button id="ctx-create-file"><i data-lucide="file-plus"></i> New File</button>
+    <button id="ctx-create-folder"><i data-lucide="folder-plus"></i> New Folder</button>
+    <button id="ctx-rename-item"><i data-lucide="edit-3"></i> Rename</button>
+    <button id="ctx-delete-item"><i data-lucide="trash-2"></i> Delete</button>
+  </div>
+
+  <!-- Editor Right-Click Context Menu -->
+  <div id="editor-context-menu" class="context-menu editor-context-menu" style="display: none;">
+    <div class="ctx-menu-section-label">格式</div>
+    <button id="ectx-bold"><i data-lucide="bold"></i> <span>粗体</span> <kbd>Ctrl+B</kbd></button>
+    <button id="ectx-italic"><i data-lucide="italic"></i> <span>斜体</span> <kbd>Ctrl+I</kbd></button>
+    <button id="ectx-strikethrough"><i data-lucide="strikethrough"></i> <span>删除线</span></button>
+    <button id="ectx-inline-code"><i data-lucide="code"></i> <span>行内代码</span></button>
+    <button id="ectx-highlight"><i data-lucide="highlighter"></i> <span>高亮文本</span></button>
+    <div class="ctx-menu-divider"></div>
+    <div class="ctx-menu-section-label">标题</div>
+    <button id="ectx-h1"><i data-lucide="heading-1"></i> <span>一级标题</span></button>
+    <button id="ectx-h2"><i data-lucide="heading-2"></i> <span>二级标题</span></button>
+    <button id="ectx-h3"><i data-lucide="heading-3"></i> <span>三级标题</span></button>
+    <div class="ctx-menu-divider"></div>
+    <div class="ctx-menu-section-label">插入</div>
+    <button id="ectx-link"><i data-lucide="link"></i> <span>插入链接</span> <kbd>Ctrl+K</kbd></button>
+    <button id="ectx-image"><i data-lucide="image"></i> <span>插入图片</span></button>
+    <button id="ectx-codeblock"><i data-lucide="file-code"></i> <span>代码块</span></button>
+    <button id="ectx-blockquote"><i data-lucide="quote"></i> <span>引用块</span></button>
+    <button id="ectx-table"><i data-lucide="table"></i> <span>插入表格</span></button>
+    <button id="ectx-ul"><i data-lucide="list"></i> <span>无序列表</span></button>
+    <button id="ectx-ol"><i data-lucide="list-ordered"></i> <span>有序列表</span></button>
+    <button id="ectx-hr"><i data-lucide="minus"></i> <span>水平分割线</span></button>
+    <div class="ctx-menu-divider"></div>
+    <button id="ectx-find"><i data-lucide="search"></i> <span>查找/替换</span> <kbd>Ctrl+F</kbd></button>
+  </div>
+
+  <!-- Custom Input Modal -->
+  <div id="input-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-content">
+      <h3>Create New File</h3>
+      <input type="text" id="modal-input-filename" placeholder="filename.md" value="Untitled.md">
+      <div class="modal-actions">
+        <button id="btn-modal-cancel" class="btn-secondary">Cancel</button>
+        <button id="btn-modal-confirm" class="btn-primary">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Load dependencies (from node_modules or CDN fallback if offline) -->
+  <script defer src="./node_modules/marked/marked.min.js"></script>
+  <script defer src="./node_modules/dompurify/dist/purify.min.js"></script>
+  <script defer src="./node_modules/turndown/dist/turndown.js"></script>
+  <script defer src="renderer.js"></script>
+</body>
+</html>

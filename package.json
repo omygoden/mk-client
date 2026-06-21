@@ -1,0 +1,56 @@
+{
+  "name": "antigravity-markdown-editor",
+  "version": "1.0.0",
+  "description": "A premium, cross-platform Markdown Editor inspired by Typora.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "package-win": "electron-builder --win",
+    "package-mac": "electron-builder --mac",
+    "package-linux": "electron-builder --linux"
+  },
+  "keywords": [
+    "markdown",
+    "editor",
+    "typora",
+    "electron",
+    "cross-platform"
+  ],
+  "author": "Antigravity",
+  "license": "MIT",
+  "dependencies": {
+    "dompurify": "^3.1.5",
+    "lucide": "^1.21.0",
+    "marked": "^13.0.0",
+    "turndown": "^7.2.4"
+  },
+  "devDependencies": {
+    "electron": "^30.0.9",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.antigravity.markdown",
+    "productName": "AntigravityMarkdown",
+    "icon": "assets/icon.ico",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/icon.icns"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer.js",
+      "index.html",
+      "styles.css",
+      "assets/**/*",
+      "node_modules/**/*"
+    ]
+  }
+}
