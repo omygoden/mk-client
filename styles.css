@@ -1095,6 +1095,8 @@ body {
   z-index: 2000;
   backdrop-filter: blur(4px);
   animation: fadeIn 0.2s ease-out;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
 }
 
 .modal-content {
@@ -1113,6 +1115,13 @@ body {
   font-size: 16px;
   font-weight: 600;
   color: var(--text-main);
+}
+
+.modal-description {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .modal-content input {
@@ -1137,6 +1146,24 @@ body {
 .modal-actions button {
   padding: 8px 16px;
   font-size: 13px;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+.modal-actions-three {
+  flex-wrap: wrap;
+}
+
+.btn-danger {
+  background-color: rgba(243, 139, 168, 0.14);
+  border: 1px solid rgba(243, 139, 168, 0.4);
+  color: #f38ba8;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.btn-danger:hover {
+  background-color: rgba(243, 139, 168, 0.24);
 }
 
 /* Empty file tree node styles */
@@ -1169,8 +1196,10 @@ body {
    Find / Replace Bar
    ============================================================ */
 .find-bar {
-  position: sticky;
+  position: absolute;
   top: 0;
+  left: 0;
+  right: 0;
   z-index: 100;
   background-color: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
@@ -1342,6 +1371,16 @@ body {
   outline: 1px solid rgba(250, 160, 50, 0.9);
 }
 
+::highlight(markdown-find-current) {
+  background-color: rgba(250, 160, 50, 0.72);
+  color: inherit;
+}
+
+.find-scroll-target {
+  outline: 2px solid rgba(250, 160, 50, 0.75);
+  outline-offset: 3px;
+}
+
 /* ============================================================
    Editor Right-Click Context Menu
    ============================================================ */
@@ -1397,3 +1436,14 @@ body {
   color: var(--text-main);
 }
 
+.editor-context-menu button.current-heading {
+  background-color: var(--bg-active);
+  color: var(--accent-color);
+}
+
+.editor-context-menu button.current-heading::after {
+  content: "✓";
+  margin-left: auto;
+  color: var(--accent-color);
+  font-weight: 700;
+}
