@@ -556,34 +556,17 @@ function setupEventListeners() {
   });
 
   // Sync scroll in split mode
-  let isScrollingTextarea = false;
-  let isScrollingPreview = false;
+  markdownTextarea.addEventListener(
+    'scroll',
+    () => scheduleSplitScrollSync(markdownTextarea, previewContainer),
+    { passive: true }
+  );
 
-  markdownTextarea.addEventListener('scroll', () => {
-    if (currentViewMode !== 'split' || isScrollingPreview) return;
-    isScrollingTextarea = true;
-
-    const textHeight = markdownTextarea.scrollHeight - markdownTextarea.clientHeight;
-    const scrollPercent = markdownTextarea.scrollTop / textHeight;
-
-    const previewHeight = previewContainer.scrollHeight - previewContainer.clientHeight;
-    previewContainer.scrollTop = scrollPercent * previewHeight;
-
-    setTimeout(() => { isScrollingTextarea = false; }, 50);
-  });
-
-  previewContainer.addEventListener('scroll', () => {
-    if (currentViewMode !== 'split' || isScrollingTextarea) return;
-    isScrollingPreview = true;
-
-    const previewHeight = previewContainer.scrollHeight - previewContainer.clientHeight;
-    const scrollPercent = previewContainer.scrollTop / previewHeight;
-
-    const textHeight = markdownTextarea.scrollHeight - markdownTextarea.clientHeight;
-    markdownTextarea.scrollTop = scrollPercent * textHeight;
-
-    setTimeout(() => { isScrollingPreview = false; }, 50);
-  });
+  previewContainer.addEventListener(
+    'scroll',
+    () => scheduleSplitScrollSync(previewContainer, markdownTextarea),
+    { passive: true }
+  );
 
   // Sort Dropdown
   if (sortDropdown) {
@@ -596,6 +579,56 @@ function setupEventListeners() {
       }
     });
   }
+}
+
+let splitScrollSyncFrame = null;
+let ignoredProgrammaticScrollElement = null;
+
+function clearSplitScrollSync() {
+  if (splitScrollSyncFrame !== null) {
+    cancelAnimationFrame(splitScrollSyncFrame);
+    splitScrollSyncFrame = null;
+  }
+  ignoredProgrammaticScrollElement = null;
+}
+
+function scheduleSplitScrollSync(sourceElement, targetElement) {
+  if (currentViewMode !== 'split') {
+    clearSplitScrollSync();
+    return;
+  }
+
+  if (ignoredProgrammaticScrollElement === sourceElement) {
+    ignoredProgrammaticScrollElement = null;
+    return;
+  }
+
+  if (splitScrollSyncFrame !== null) {
+    cancelAnimationFrame(splitScrollSyncFrame);
+  }
+
+  splitScrollSyncFrame = requestAnimationFrame(() => {
+    splitScrollSyncFrame = null;
+    if (currentViewMode !== 'split') return;
+
+    const sourceScrollableHeight = sourceElement.scrollHeight - sourceElement.clientHeight;
+    if (sourceScrollableHeight <= 0) return;
+
+    const targetScrollableHeight = Math.max(0, targetElement.scrollHeight - targetElement.clientHeight);
+    const scrollPercent = sourceElement.scrollTop / sourceScrollableHeight;
+    const nextScrollTop = scrollPercent * targetScrollableHeight;
+
+    if (Math.abs(targetElement.scrollTop - nextScrollTop) < 1) return;
+
+    ignoredProgrammaticScrollElement = targetElement;
+    targetElement.scrollTop = nextScrollTop;
+
+    requestAnimationFrame(() => {
+      if (ignoredProgrammaticScrollElement === targetElement) {
+        ignoredProgrammaticScrollElement = null;
+      }
+    });
+  });
 }
 
 // --- Keyboard Shortcuts ---
@@ -1325,6 +1358,7 @@ function toggleSidebar() {
 
 // --- View Modes Toggling ---
 function setViewMode(mode) {
+  clearSplitScrollSync();
   currentViewMode = mode;
 
   // Update UI Button Styles
@@ -1347,6 +1381,7 @@ function setViewMode(mode) {
     previewContent.classList.remove('live-edit-mode');
     previewContent.contentEditable = "false";
     renderMarkdown();
+    requestAnimationFrame(() => scheduleSplitScrollSync(markdownTextarea, previewContainer));
   } else if (mode === 'preview') {
     cleanupLiveEditMode();
     editorContainer.classList.add('hidden');
