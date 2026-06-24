@@ -2,17 +2,18 @@
 let currentFilePath = null;
 let originalContent = '';
 let isModified = false;
-let currentViewMode = 'edit'; // 'edit', 'split', 'preview'
+let currentViewMode = 'live'; // 'edit', 'split', 'preview', 'live'
 let openDirectories = new Set(); // To keep track of expanded directories in sidebar
 let sidebarFilesData = [];
 
 // DOM element references - lazily initialized on DOMContentLoaded to avoid
 // blocking script parse with 30+ synchronous getElementById calls
-let bodyElement, themeDropdown;
+let bodyElement, themeDropdown, btnZoomIn, btnZoomOut, btnZoomReset, zoomLevel;
 let markdownTextarea, previewContainer, previewContent, editorContainer;
 let currentFilename, unsavedIndicator, dirTree, outlineView, currentFilepathStatus, paneSortContainer, sortDropdown;
 let appSidebar, sidebarExpandHandle, btnToggleSidebar, tabFiles, tabOutline, paneFiles, paneOutline;
-let btnNewFile, btnOpenFile, btnSaveFile, btnModeEdit, btnModeSplit, btnModePreview, btnModeLive, btnTypewriter, btnZen, btnExportPdf, btnExportHtml;
+let btnNewFile, btnOpenFile, btnSaveFile, btnModeEdit, btnModeSplit, btnModePreview, btnModeLive, btnExportPdf, btnExportHtml;
+let btnRecent, recentMenu, recentList, btnClearRecent;
 let contextMenu, ctxCreateFile, ctxCreateFolder, ctxRenameItem, ctxDeleteItem;
 let selectedPathForContextMenu = null;
 let selectedIsDir = false;
@@ -39,6 +40,13 @@ const undoStack = [];
 const redoStack = [];
 const MAX_HISTORY_ENTRIES = 200;
 let isRestoringHistory = false;
+const APP_ZOOM_STORAGE_KEY = 'app-zoom-percent';
+const APP_ZOOM_STEP = 10;
+const APP_ZOOM_MIN = 50;
+const APP_ZOOM_MAX = 200;
+let appZoomPercent = 100;
+const RECENT_ITEMS_STORAGE_KEY = 'recent-open-items';
+const MAX_RECENT_ITEMS = 12;
 
 // Editor right-click context menu
 let editorContextMenu;
@@ -47,6 +55,10 @@ let editorContextMenu;
 function initDOMReferences() {
   bodyElement = document.body;
   themeDropdown = document.getElementById('theme-dropdown');
+  btnZoomIn = document.getElementById('btn-zoom-in');
+  btnZoomOut = document.getElementById('btn-zoom-out');
+  btnZoomReset = document.getElementById('btn-zoom-reset');
+  zoomLevel = document.getElementById('zoom-level');
   markdownTextarea = document.getElementById('markdown-textarea');
   previewContainer = document.getElementById('preview-container');
   previewContent = document.getElementById('preview-content');
@@ -67,13 +79,15 @@ function initDOMReferences() {
   paneOutline = document.getElementById('pane-outline');
   btnNewFile = document.getElementById('btn-new-file');
   btnOpenFile = document.getElementById('btn-open-file');
+  btnRecent = document.getElementById('btn-recent');
+  recentMenu = document.getElementById('recent-menu');
+  recentList = document.getElementById('recent-list');
+  btnClearRecent = document.getElementById('btn-clear-recent');
   btnSaveFile = document.getElementById('btn-save-file');
   btnModeEdit = document.getElementById('btn-mode-edit');
   btnModeSplit = document.getElementById('btn-mode-split');
   btnModePreview = document.getElementById('btn-mode-preview');
   btnModeLive = document.getElementById('btn-mode-live');
-  btnTypewriter = document.getElementById('btn-typewriter');
-  btnZen = document.getElementById('btn-zen');
   btnExportPdf = document.getElementById('btn-export-pdf');
   btnExportHtml = document.getElementById('btn-export-html');
   contextMenu = document.getElementById('context-menu');
@@ -140,8 +154,13 @@ document.addEventListener('DOMContentLoaded', () => {
     sortDropdown.value = savedSort;
   }
 
+  // Load saved app-wide zoom before wiring events so the UI starts at the user's preferred scale.
+  applySavedAppZoom();
+  renderRecentItems();
+
   // 4. Setup Event Listeners
   setupEventListeners();
+  setViewMode('live');
 
   // Defer Lucide icon rendering and initial markdown parse to allow layout to paint instantly
   requestAnimationFrame(() => {
@@ -152,10 +171,44 @@ document.addEventListener('DOMContentLoaded', () => {
     const idleCb = window.requestIdleCallback || ((cb) => setTimeout(cb, 1));
     idleCb(() => {
       updateStats();
-      renderMarkdown();
+      if (currentViewMode !== 'live') {
+        renderMarkdown();
+      }
+      generateOutline();
     });
   });
 });
+
+function applySavedAppZoom() {
+  const savedZoom = Number.parseInt(localStorage.getItem(APP_ZOOM_STORAGE_KEY), 10);
+  setAppZoom(Number.isFinite(savedZoom) ? savedZoom : 100, { persist: false });
+}
+
+function changeAppZoom(delta) {
+  setAppZoom(appZoomPercent + delta);
+}
+
+function setAppZoom(percent, options = {}) {
+  const { persist = true } = options;
+  const normalizedPercent = Math.min(APP_ZOOM_MAX, Math.max(APP_ZOOM_MIN, Math.round(percent / APP_ZOOM_STEP) * APP_ZOOM_STEP));
+
+  appZoomPercent = normalizedPercent;
+  if (window.electronAPI && typeof window.electronAPI.setZoomFactor === 'function') {
+    window.electronAPI.setZoomFactor(normalizedPercent / 100);
+  }
+  if (zoomLevel) {
+    zoomLevel.textContent = `${normalizedPercent}%`;
+  }
+  if (btnZoomOut) {
+    btnZoomOut.disabled = normalizedPercent <= APP_ZOOM_MIN;
+  }
+  if (btnZoomIn) {
+    btnZoomIn.disabled = normalizedPercent >= APP_ZOOM_MAX;
+  }
+  if (persist) {
+    localStorage.setItem(APP_ZOOM_STORAGE_KEY, String(normalizedPercent));
+  }
+}
 
 // --- Event Listeners Setup ---
 function setupEventListeners() {
@@ -174,6 +227,11 @@ function setupEventListeners() {
   if (btnMinimize) btnMinimize.addEventListener('click', () => window.electronAPI.minimize());
   if (btnMaximize) btnMaximize.addEventListener('click', () => window.electronAPI.maximize());
   if (btnClose) btnClose.addEventListener('click', () => window.electronAPI.close());
+
+  // --- App Zoom Controls ---
+  if (btnZoomOut) btnZoomOut.addEventListener('click', () => changeAppZoom(-APP_ZOOM_STEP));
+  if (btnZoomIn) btnZoomIn.addEventListener('click', () => changeAppZoom(APP_ZOOM_STEP));
+  if (btnZoomReset) btnZoomReset.addEventListener('click', () => setAppZoom(100));
 
   // Debounced render for input performance
   let renderTimer = null;
@@ -245,6 +303,26 @@ function setupEventListeners() {
   btnNewFile.addEventListener('click', newFile);
   btnOpenFile.addEventListener('click', openFile);
   btnSaveFile.addEventListener('click', saveFile);
+  if (btnRecent) {
+    btnRecent.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = recentMenu.classList.toggle('open');
+      btnRecent.setAttribute('aria-expanded', String(isOpen));
+      if (isOpen) renderRecentItems();
+    });
+  }
+  if (btnClearRecent) {
+    btnClearRecent.addEventListener('click', (e) => {
+      e.stopPropagation();
+      saveRecentItems([]);
+      closeRecentMenu();
+    });
+  }
+  document.addEventListener('click', (e) => {
+    if (recentMenu && !e.target.closest('.recent-dropdown')) {
+      closeRecentMenu();
+    }
+  });
 
   const btnOpenFolder = document.getElementById('btn-open-folder');
   const btnOpenFolderPlaceholder = document.getElementById('btn-open-folder-placeholder');
@@ -436,10 +514,6 @@ function setupEventListeners() {
       resolveUnsavedPrompt('cancel');
     }
   });
-
-  // Distraction Free Modes
-  btnZen.addEventListener('click', toggleZenMode);
-  btnTypewriter.addEventListener('click', toggleTypewriterMode);
 
   // Export File Options
   btnExportPdf.addEventListener('click', exportPdf);
@@ -635,6 +709,25 @@ function scheduleSplitScrollSync(sourceElement, targetElement) {
 function handleGlobalShortcuts(e) {
   const key = e.key.toLowerCase();
   const isEditorTarget = e.target === markdownTextarea || previewContent.contains(e.target);
+
+  if (e.ctrlKey || e.metaKey) {
+    if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') {
+      e.preventDefault();
+      changeAppZoom(APP_ZOOM_STEP);
+      return;
+    }
+    if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') {
+      e.preventDefault();
+      changeAppZoom(-APP_ZOOM_STEP);
+      return;
+    }
+    if (e.key === '0' || e.code === 'Numpad0') {
+      e.preventDefault();
+      setAppZoom(100);
+      return;
+    }
+  }
+
   if ((e.ctrlKey || e.metaKey) && isEditorTarget && key === 'z') {
     e.preventDefault();
     if (e.shiftKey) redoEditorChange(); else undoEditorChange();
@@ -1398,50 +1491,125 @@ function setViewMode(mode) {
   focusActiveEditor();
 }
 
-// --- Zen Mode (Distraction Free) ---
-function toggleZenMode() {
-  const isZen = bodyElement.classList.toggle('zen-mode');
-  btnZen.classList.toggle('active', isZen);
-
-  // Collapse sidebar in Zen Mode if open
-  if (isZen && !appSidebar.classList.contains('collapsed')) {
-    toggleSidebar();
+function getRecentItems() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(RECENT_ITEMS_STORAGE_KEY) || '[]');
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(item =>
+      item &&
+      (item.type === 'file' || item.type === 'folder') &&
+      typeof item.path === 'string' &&
+      item.path.trim()
+    ).slice(0, MAX_RECENT_ITEMS);
+  } catch {
+    return [];
   }
 }
 
-// --- Typewriter Mode ---
-let isTypewriterActive = false;
-function toggleTypewriterMode() {
-  isTypewriterActive = !isTypewriterActive;
-  btnTypewriter.classList.toggle('active', isTypewriterActive);
-
-  if (isTypewriterActive) {
-    markdownTextarea.addEventListener('keydown', centerCursorInTextarea);
-    markdownTextarea.addEventListener('click', centerCursorInTextarea);
-    centerCursorInTextarea();
-  } else {
-    markdownTextarea.removeEventListener('keydown', centerCursorInTextarea);
-    markdownTextarea.removeEventListener('click', centerCursorInTextarea);
-    markdownTextarea.style.paddingBottom = '40px';
-  }
+function saveRecentItems(items) {
+  localStorage.setItem(RECENT_ITEMS_STORAGE_KEY, JSON.stringify(items.slice(0, MAX_RECENT_ITEMS)));
+  renderRecentItems();
 }
 
-function centerCursorInTextarea() {
-  setTimeout(() => {
-    const textareaHeight = markdownTextarea.clientHeight;
-    // Estimate cursor scroll height based on line splits
-    const textBeforeCursor = markdownTextarea.value.substring(0, markdownTextarea.selectionStart);
-    const linesBeforeCursor = textBeforeCursor.split('\n').length;
+function addRecentItem(type, itemPath) {
+  if (!itemPath) return;
+  const normalizedPath = itemPath.trim();
+  const items = getRecentItems().filter(item =>
+    !(item.type === type && item.path.toLowerCase() === normalizedPath.toLowerCase())
+  );
+  items.unshift({ type, path: normalizedPath, openedAt: Date.now() });
+  saveRecentItems(items);
+}
 
-    // Line height is 1.7 * 15px = ~25.5px
-    const cursorTopPosition = linesBeforeCursor * 25.5;
+function removeRecentItem(type, itemPath) {
+  const items = getRecentItems().filter(item =>
+    !(item.type === type && item.path === itemPath)
+  );
+  saveRecentItems(items);
+}
 
-    // Adjust bottom padding to allow scrolling past last line
-    markdownTextarea.style.paddingBottom = `${textareaHeight / 2}px`;
+function closeRecentMenu() {
+  if (!recentMenu || !btnRecent) return;
+  recentMenu.classList.remove('open');
+  btnRecent.setAttribute('aria-expanded', 'false');
+}
 
-    // Scroll cursor to center of screen
-    markdownTextarea.scrollTop = cursorTopPosition - (textareaHeight / 2) + 40;
-  }, 10);
+function getPathDisplayName(itemPath) {
+  const parts = itemPath.split(/[/\\]/).filter(Boolean);
+  return parts[parts.length - 1] || itemPath;
+}
+
+function renderRecentItems() {
+  if (!recentList || !btnClearRecent) return;
+  const items = getRecentItems();
+  recentList.replaceChildren();
+  btnClearRecent.disabled = items.length === 0;
+
+  if (items.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'recent-empty';
+    empty.textContent = 'No recent files or folders';
+    recentList.appendChild(empty);
+    return;
+  }
+
+  items.forEach(item => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'recent-item';
+    button.title = item.path;
+    button.setAttribute('role', 'menuitem');
+
+    const icon = document.createElement('i');
+    icon.setAttribute('data-lucide', item.type === 'folder' ? 'folder' : 'file-text');
+
+    const text = document.createElement('span');
+    text.className = 'recent-item-text';
+
+    const name = document.createElement('span');
+    name.className = 'recent-item-name';
+    name.textContent = getPathDisplayName(item.path);
+
+    const itemPath = document.createElement('span');
+    itemPath.className = 'recent-item-path';
+    itemPath.textContent = item.path;
+
+    text.append(name, itemPath);
+    button.append(icon, text);
+    button.addEventListener('click', () => openRecentItem(item));
+    recentList.appendChild(button);
+  });
+
+  if (window.lucide) lucide.createIcons();
+}
+
+async function openRecentItem(item) {
+  closeRecentMenu();
+
+  if (item.type === 'folder') {
+    const loaded = await loadSidebarDirectory(item.path);
+    if (!loaded) {
+      removeRecentItem(item.type, item.path);
+      return;
+    }
+    currentSidebarDir = item.path;
+    addRecentItem('folder', item.path);
+    document.getElementById('btn-new-file-sidebar').style.display = 'flex';
+    return;
+  }
+
+  const previousOffset = getActiveEditorOffset();
+  if (!await confirmFileTransition(previousOffset)) return;
+
+  const readResult = await window.electronAPI.readFile(item.path);
+  if (!readResult.success) {
+    removeRecentItem(item.type, item.path);
+    alert(`The recent file is no longer available:\n${item.path}\n\n${readResult.error}`);
+    focusActiveEditor(previousOffset);
+    return;
+  }
+
+  loadFile(item.path, readResult.content, readResult.fileName);
 }
 
 // --- Formatting Helpers ---
@@ -1671,6 +1839,7 @@ function loadFile(filePath, content, fileName) {
 
   currentFilename.innerText = fileName;
   currentFilepathStatus.innerText = filePath;
+  addRecentItem('file', filePath);
 
   // Highlight active file in sidebar if it exists
   document.querySelectorAll('.tree-node.file').forEach(node => {
@@ -1725,6 +1894,7 @@ async function saveFile() {
         const fileName = parts[parts.length - 1];
         currentFilename.innerText = fileName;
         currentFilepathStatus.innerText = newPath;
+        addRecentItem('file', newPath);
 
         // If sidebar directory is open, refresh it to include the new file
         if (currentSidebarDir) {
@@ -1750,8 +1920,13 @@ async function openFolder() {
   const previousOffset = getActiveEditorOffset();
   const folderData = await window.electronAPI.openDirectory();
   if (folderData) {
+    const loaded = await loadSidebarDirectory(folderData.dirPath);
+    if (!loaded) {
+      focusActiveEditor(previousOffset);
+      return;
+    }
     currentSidebarDir = folderData.dirPath;
-    loadSidebarDirectory(folderData.dirPath);
+    addRecentItem('folder', folderData.dirPath);
     // Show 'New File' button in sidebar header once folder is open
     document.getElementById('btn-new-file-sidebar').style.display = 'flex';
   }
@@ -1769,12 +1944,15 @@ async function loadSidebarDirectory(dirPath) {
     if (paneSortContainer) {
       paneSortContainer.style.display = 'block';
     }
+    return true;
   } else {
     sidebarFilesData = [];
     dirTree.innerHTML = `<div class="tree-placeholder"><p>Error loading folder: ${result.error}</p></div>`;
     if (paneSortContainer) {
       paneSortContainer.style.display = 'none';
     }
+    alert(`Error loading folder: ${result.error}`);
+    return false;
   }
 }
 

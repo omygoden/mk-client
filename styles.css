@@ -85,6 +85,69 @@
   --titlebar-bg: #f4e5c8;
 }
 
+/* Graphite Mist — neutral charcoal based on the supplied reference color */
+.theme-graphite {
+  --bg-primary: #343a40;
+  --bg-secondary: #2d3338;
+  --bg-active: #41484f;
+  --border-color: #4a5259;
+  --text-main: #d8dcdf;
+  --text-muted: #9ca4aa;
+  --text-heading: #eef0f1;
+  --accent-color: #8fb3c7;
+  --accent-hover: #a7c5d4;
+  --accent-rgb: 143, 179, 199;
+  --code-bg: #292f34;
+  --code-color: #d6a7ad;
+  --blockquote-bg: #30363b;
+  --blockquote-border: #7895a5;
+  --toolbar-bg: #2d3338;
+  --shadow-color: rgba(16, 20, 23, 0.28);
+  --titlebar-bg: #2a3035;
+}
+
+/* Sage Night — low-saturation green that stays soft during long sessions */
+.theme-sage {
+  --bg-primary: #303a36;
+  --bg-secondary: #29332f;
+  --bg-active: #3c4842;
+  --border-color: #46534d;
+  --text-main: #d4ddd7;
+  --text-muted: #97a59d;
+  --text-heading: #edf2ee;
+  --accent-color: #91b5a1;
+  --accent-hover: #a8c5b4;
+  --accent-rgb: 145, 181, 161;
+  --code-bg: #26302c;
+  --code-color: #d2aaa0;
+  --blockquote-bg: #2c3632;
+  --blockquote-border: #799987;
+  --toolbar-bg: #29332f;
+  --shadow-color: rgba(13, 20, 17, 0.28);
+  --titlebar-bg: #27302d;
+}
+
+/* Warm Dusk — a muted warm gray without the brightness of a paper theme */
+.theme-dusk {
+  --bg-primary: #3d3937;
+  --bg-secondary: #35312f;
+  --bg-active: #4b4541;
+  --border-color: #58504b;
+  --text-main: #ddd7d1;
+  --text-muted: #aaa099;
+  --text-heading: #f1ece7;
+  --accent-color: #c2a68d;
+  --accent-hover: #d0b69f;
+  --accent-rgb: 194, 166, 141;
+  --code-bg: #302d2b;
+  --code-color: #d8aaa2;
+  --blockquote-bg: #383330;
+  --blockquote-border: #a18774;
+  --toolbar-bg: #35312f;
+  --shadow-color: rgba(22, 17, 14, 0.28);
+  --titlebar-bg: #322e2c;
+}
+
 /* --- Suppress transitions on startup to prevent visual flicker --- */
 body:not(.loaded) * {
   transition: none !important;
@@ -626,6 +689,117 @@ body {
   margin: 0 4px;
 }
 
+.recent-dropdown {
+  position: relative;
+}
+
+.recent-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: min(420px, 70vw);
+  max-height: min(480px, 70vh);
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  box-shadow: 0 10px 28px var(--shadow-color);
+  overflow: hidden;
+  z-index: 30;
+}
+
+.recent-menu.open {
+  display: block;
+}
+
+.recent-menu-header {
+  height: 36px;
+  padding: 0 10px 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.recent-menu-header button {
+  border: 0;
+  background: transparent;
+  color: var(--accent-color);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.recent-menu-header button:disabled {
+  color: var(--text-muted);
+  cursor: default;
+  opacity: 0.5;
+}
+
+.recent-list {
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 5px;
+}
+
+.recent-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  color: var(--text-main);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.recent-item:hover {
+  background-color: var(--bg-active);
+}
+
+.recent-item > i {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--accent-color);
+}
+
+.recent-item-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.recent-item-name,
+.recent-item-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-item-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.recent-item-path {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.recent-empty {
+  padding: 22px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
 /* Theme selector dropdown */
 .theme-selector {
   display: flex;
@@ -654,6 +828,62 @@ body {
 .theme-selector select option {
   background-color: var(--bg-secondary);
   color: var(--text-main);
+}
+
+/* App-wide zoom controls */
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  padding: 3px 5px;
+  border-radius: 4px;
+  background-color: var(--bg-primary);
+}
+
+.zoom-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  min-width: 24px;
+  height: 22px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  transition: background-color 0.15s, color 0.15s, opacity 0.15s;
+}
+
+.zoom-btn i {
+  width: 13px;
+  height: 13px;
+}
+
+.zoom-btn:hover:not(:disabled) {
+  background-color: var(--bg-active);
+  color: var(--text-main);
+}
+
+.zoom-btn:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+
+.zoom-reset {
+  padding: 0 6px;
+}
+
+.zoom-level {
+  min-width: 38px;
+  text-align: center;
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Export dropdown */
@@ -766,38 +996,6 @@ body {
 /* Split Pane Divider */
 .editor-pane-container > .editor-subpane:not(:last-child):not(.hidden) {
   border-right: 1px solid var(--border-color);
-}
-
-/* Focus Mode Style (fades out UI elements) */
-.zen-mode .app-header {
-  display: none;
-}
-.zen-mode .sidebar {
-  display: none;
-}
-.zen-mode .sidebar-expand-handle {
-  display: none;
-}
-.zen-mode .toolbar {
-  display: none;
-}
-.zen-mode .status-bar {
-  display: none;
-}
-.zen-mode #markdown-textarea {
-  max-width: 800px;
-  margin: 0 auto;
-  padding: 60px 40px;
-}
-.zen-mode #preview-container {
-  max-width: 800px;
-  margin: 0 auto;
-  padding: 60px 40px;
-}
-
-/* Typewriter Mode Style */
-.typewriter-mode #markdown-textarea {
-  /* Vertical alignment helper styled in JS */
 }
 
 /* --- Markdown Rendered Styling --- */

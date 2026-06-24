@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   openFile: () => ipcRenderer.invoke('dialog:openFile'),
@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listMarkdown: (dirPath) => ipcRenderer.invoke('dir:listMarkdown', dirPath),
   exportPdf: (htmlContent, defaultPath) => ipcRenderer.invoke('export:pdf', htmlContent, defaultPath),
   exportHtml: (htmlContent, defaultPath) => ipcRenderer.invoke('export:html', htmlContent, defaultPath),
+  setZoomFactor: (factor) => webFrame.setZoomFactor(factor),
   
   // Custom Window Controls
   minimize: () => ipcRenderer.send('window:minimize'),

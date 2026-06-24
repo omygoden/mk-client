@@ -120,12 +120,24 @@
           <button id="btn-open-file" class="toolbar-btn" title="Open File (Ctrl+O)">
             <i data-lucide="file-symlink"></i>
           </button>
+          <div class="recent-dropdown">
+            <button id="btn-recent" class="toolbar-btn" title="Recent Files and Folders" aria-haspopup="true" aria-expanded="false">
+              <i data-lucide="history"></i>
+            </button>
+            <div id="recent-menu" class="recent-menu" role="menu">
+              <div class="recent-menu-header">
+                <span>Recent</span>
+                <button id="btn-clear-recent" type="button">Clear</button>
+              </div>
+              <div id="recent-list" class="recent-list"></div>
+            </div>
+          </div>
           <button id="btn-save-file" class="toolbar-btn" title="Save File (Ctrl+S)">
             <i data-lucide="save"></i>
           </button>
           <div class="divider"></div>
           <!-- View Modes -->
-          <button id="btn-mode-edit" class="toolbar-btn active" title="Editor Mode (Ctrl+1)">
+          <button id="btn-mode-edit" class="toolbar-btn" title="Editor Mode (Ctrl+1)">
             <i data-lucide="code-2"></i>
           </button>
           <button id="btn-mode-split" class="toolbar-btn" title="Split Screen Mode (Ctrl+2)">
@@ -134,7 +146,7 @@
           <button id="btn-mode-preview" class="toolbar-btn" title="Live Preview Mode (Ctrl+3)">
             <i data-lucide="eye"></i>
           </button>
-          <button id="btn-mode-live" class="toolbar-btn" title="Live Write Mode (Ctrl+4)">
+          <button id="btn-mode-live" class="toolbar-btn active" title="Live Write Mode (Ctrl+4)">
             <i data-lucide="feather"></i>
           </button>
         </div>
@@ -162,14 +174,6 @@
           <button id="format-table" class="toolbar-btn" title="Insert Table">
             <i data-lucide="table"></i>
           </button>
-          <div class="divider"></div>
-          <!-- Distraction-free features -->
-          <button id="btn-typewriter" class="toolbar-btn" title="Typewriter Mode (Keep cursor center)">
-            <i data-lucide="target"></i>
-          </button>
-          <button id="btn-zen" class="toolbar-btn" title="Zen Mode (Distraction-free)">
-            <i data-lucide="maximize-2"></i>
-          </button>
         </div>
 
         <div class="toolbar-group">
@@ -181,7 +185,20 @@
               <option value="theme-light">Classic Light</option>
               <option value="theme-nord">Nordic Frost</option>
               <option value="theme-sepia">Sepia Paper</option>
+              <option value="theme-graphite">Graphite Mist</option>
+              <option value="theme-sage">Sage Night</option>
+              <option value="theme-dusk">Warm Dusk</option>
             </select>
+          </div>
+          <div class="zoom-controls" title="App Zoom">
+            <button id="btn-zoom-out" class="zoom-btn" title="Zoom Out (Ctrl+-)">
+              <i data-lucide="minus"></i>
+            </button>
+            <span id="zoom-level" class="zoom-level">100%</span>
+            <button id="btn-zoom-in" class="zoom-btn" title="Zoom In (Ctrl++)">
+              <i data-lucide="plus"></i>
+            </button>
+            <button id="btn-zoom-reset" class="zoom-btn zoom-reset" title="Reset Zoom (Ctrl+0)">1:1</button>
           </div>
           <div class="export-dropdown">
             <button id="btn-export-menu" class="btn-secondary" title="Export Document">
@@ -227,7 +244,7 @@
         </div>
 
         <!-- Text Editor -->
-        <div id="editor-container" class="editor-subpane">
+        <div id="editor-container" class="editor-subpane hidden">
           <textarea id="markdown-textarea" placeholder="Start writing your Markdown content here... 
 
 Use standard Markdown syntax like:
@@ -245,7 +262,7 @@ console.log('Hello World');
         </div>
 
         <!-- HTML Preview -->
-        <div id="preview-container" class="editor-subpane hidden">
+        <div id="preview-container" class="editor-subpane">
           <div id="preview-content" class="markdown-body">
             <!-- Rendered Markdown goes here -->
           </div>

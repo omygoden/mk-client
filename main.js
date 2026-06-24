@@ -2,14 +2,11 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
-// Disable hardware acceleration to bypass slow GPU process initialization on Windows (saves 1-1.5 seconds of boot time)
-app.disableHardwareAcceleration();
+// Keep Electron's default hardware acceleration enabled. Disabling the GPU
+// forces Chromium to paint and composite scrolling on the CPU, which makes
+// high-refresh-rate displays feel substantially less smooth.
 
-// Apply high-performance command line switches to optimize Chromium startup
-app.commandLine.appendSwitch('disable-gpu');
-app.commandLine.appendSwitch('disable-software-rasterizer');
-app.commandLine.appendSwitch('disable-gpu-sandbox');
-app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+// Apply command line switches that do not disable GPU rendering/compositing.
 app.commandLine.appendSwitch('disable-extensions');
 app.commandLine.appendSwitch('disable-background-networking');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
