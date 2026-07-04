@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -176,6 +176,9 @@ ipcMain.handle('file:write', async (event, filePath, content) => {
 // IPC Handler: Create File in specific Directory
 ipcMain.handle('file:create-in-dir', async (event, parentDir, fileName) => {
   try {
+    if (!fs.existsSync(parentDir) || !fs.statSync(parentDir).isDirectory()) {
+      return { success: false, error: 'Target folder no longer exists' };
+    }
     const fullPath = path.join(parentDir, fileName);
     if (fs.existsSync(fullPath)) {
       return { success: false, error: 'File already exists' };
@@ -190,6 +193,9 @@ ipcMain.handle('file:create-in-dir', async (event, parentDir, fileName) => {
 // IPC Handler: Create Folder
 ipcMain.handle('dir:create', async (event, parentDir, folderName) => {
   try {
+    if (!fs.existsSync(parentDir) || !fs.statSync(parentDir).isDirectory()) {
+      return { success: false, error: 'Target folder no longer exists' };
+    }
     const fullPath = path.join(parentDir, folderName);
     if (fs.existsSync(fullPath)) {
       return { success: false, error: 'Folder already exists' };
@@ -240,6 +246,74 @@ ipcMain.handle('file:move', async (event, srcPath, destDir) => {
     }
     fs.renameSync(srcPath, destPath);
     return { success: true, newPath: destPath };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// IPC Handler: Move multiple files/folders
+ipcMain.handle('file:moveMany', async (event, srcPaths, destDir) => {
+  try {
+    if (!Array.isArray(srcPaths) || srcPaths.length === 0) {
+      return { success: false, error: 'No items selected' };
+    }
+    if (!fs.existsSync(destDir) || !fs.statSync(destDir).isDirectory()) {
+      return { success: false, error: 'Target folder no longer exists' };
+    }
+
+    const normalizedDest = path.resolve(destDir);
+    const uniqueSrcPaths = [...new Set(srcPaths)].map((srcPath) => path.resolve(srcPath));
+    const moved = [];
+    const errors = [];
+
+    for (const srcPath of uniqueSrcPaths) {
+      try {
+        if (!fs.existsSync(srcPath)) {
+          errors.push({ path: srcPath, error: 'Source item no longer exists' });
+          continue;
+        }
+
+        const sourceStat = fs.statSync(srcPath);
+        if (sourceStat.isDirectory()) {
+          const relativeDest = path.relative(srcPath, normalizedDest);
+          if (relativeDest === '' || (!relativeDest.startsWith('..') && !path.isAbsolute(relativeDest))) {
+            errors.push({ path: srcPath, error: 'Cannot move a folder into itself' });
+            continue;
+          }
+        }
+
+        const fileName = path.basename(srcPath);
+        const destPath = path.join(normalizedDest, fileName);
+        if (path.resolve(path.dirname(srcPath)) === normalizedDest) {
+          errors.push({ path: srcPath, error: 'Item is already in this folder' });
+          continue;
+        }
+        if (fs.existsSync(destPath)) {
+          errors.push({ path: srcPath, error: 'Target item already exists in destination' });
+          continue;
+        }
+
+        fs.renameSync(srcPath, destPath);
+        moved.push({ oldPath: srcPath, newPath: destPath });
+      } catch (error) {
+        errors.push({ path: srcPath, error: error.message });
+      }
+    }
+
+    return { success: errors.length === 0, moved, errors };
+  } catch (error) {
+    return { success: false, error: error.message, moved: [], errors: [] };
+  }
+});
+
+// IPC Handler: Reveal file/folder in OS file manager
+ipcMain.handle('shell:showItemInFolder', async (event, itemPath) => {
+  try {
+    if (!itemPath || !fs.existsSync(itemPath)) {
+      return { success: false, error: 'Item no longer exists' };
+    }
+    shell.showItemInFolder(itemPath);
+    return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
   }

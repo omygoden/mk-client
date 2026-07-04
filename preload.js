@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, webFrame } = require('electron');
+const { contextBridge, ipcRenderer, webFrame, clipboard } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   openFile: () => ipcRenderer.invoke('dialog:openFile'),
@@ -11,6 +11,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteItem: (itemPath) => ipcRenderer.invoke('file:delete', itemPath),
   renameItem: (oldPath, newName) => ipcRenderer.invoke('file:rename', oldPath, newName),
   moveItem: (srcPath, destDir) => ipcRenderer.invoke('file:move', srcPath, destDir),
+  moveItems: (srcPaths, destDir) => ipcRenderer.invoke('file:moveMany', srcPaths, destDir),
+  showItemInFolder: (itemPath) => ipcRenderer.invoke('shell:showItemInFolder', itemPath),
+  copyText: (text) => clipboard.writeText(text),
   listMarkdown: (dirPath) => ipcRenderer.invoke('dir:listMarkdown', dirPath),
   exportPdf: (htmlContent, defaultPath) => ipcRenderer.invoke('export:pdf', htmlContent, defaultPath),
   exportHtml: (htmlContent, defaultPath) => ipcRenderer.invoke('export:html', htmlContent, defaultPath),

@@ -570,17 +570,50 @@ body {
   color: var(--bg-primary) !important;
   font-weight: 500;
 }
+.tree-node.file.selected:not(.active) {
+  background-color: color-mix(in srgb, var(--accent-color) 22%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent-color) 50%, transparent);
+}
+.tree-node.dragging {
+  opacity: 0.5;
+}
 .tree-node.active i {
   stroke: var(--bg-primary);
 }
 .tree-node.directory {
-  font-weight: 500;
+  color: var(--text-heading);
+  font-weight: 600;
 }
 .tree-node i {
   width: 14px;
   height: 14px;
   color: var(--text-muted);
   flex-shrink: 0;
+}
+.tree-node .node-chevron,
+.tree-node .node-spacer {
+  width: 12px;
+  height: 12px;
+}
+.tree-node .node-spacer {
+  opacity: 0;
+}
+.tree-node.directory .node-icon {
+  color: var(--accent-color);
+  stroke-width: 2.25;
+}
+.tree-node.file .node-icon {
+  color: var(--text-muted);
+  opacity: 0.82;
+}
+.tree-node.directory:hover .node-icon {
+  color: var(--accent-hover);
+}
+.tree-node .node-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tree-node.active i {
   color: var(--bg-primary);
@@ -972,6 +1005,64 @@ body {
   display: none !important;
 }
 
+.live-scroll-controls {
+  display: none;
+}
+
+#preview-container.live-view .live-scroll-controls {
+  position: sticky;
+  top: calc(50% - 35px);
+  left: 16px;
+  z-index: 12;
+  width: 30px;
+  height: 0;
+  align-self: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: visible;
+}
+
+#preview-container.live-view {
+  cursor: text;
+}
+
+.live-scroll-controls button {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
+  color: var(--text-muted);
+  box-shadow: 0 3px 10px var(--shadow-color);
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition: color 0.15s, background-color 0.15s, border-color 0.15s, opacity 0.15s, transform 0.15s;
+}
+
+.live-scroll-controls button:hover:not(:disabled) {
+  color: var(--accent-color);
+  border-color: var(--accent-color);
+  background-color: var(--bg-active);
+  transform: translateY(-1px);
+}
+
+.live-scroll-controls button:disabled {
+  opacity: 0.28;
+  cursor: default;
+  box-shadow: none;
+}
+
+.live-scroll-controls button i {
+  width: 15px;
+  height: 15px;
+}
+
 /* Text Editor Specifics */
 #markdown-textarea {
   flex: 1;
@@ -1228,6 +1319,12 @@ body {
   width: 14px;
   height: 14px;
   color: var(--text-muted);
+}
+
+.context-menu .ctx-menu-divider {
+  height: 1px;
+  margin: 4px 0;
+  background-color: var(--border-color);
 }
 
 /* Live Edit Mode */

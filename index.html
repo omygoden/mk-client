@@ -68,6 +68,9 @@
           <button id="btn-open-folder" class="pane-btn" title="Open Folder">
             <i data-lucide="folder-plus"></i> Open Folder
           </button>
+          <button id="btn-refresh-sidebar" class="pane-btn" title="Refresh Files" style="display: none;">
+            <i data-lucide="refresh-cw"></i>
+          </button>
           <button id="btn-new-file-sidebar" class="pane-btn" title="New File" style="display: none;">
             <i data-lucide="plus"></i>
           </button>
@@ -263,6 +266,14 @@ console.log('Hello World');
 
         <!-- HTML Preview -->
         <div id="preview-container" class="editor-subpane">
+          <div id="live-scroll-controls" class="live-scroll-controls" aria-label="Document scroll controls">
+            <button id="btn-scroll-top" type="button" title="Scroll to Top" aria-label="Scroll to Top">
+              <i data-lucide="chevrons-up"></i>
+            </button>
+            <button id="btn-scroll-bottom" type="button" title="Scroll to Bottom" aria-label="Scroll to Bottom">
+              <i data-lucide="chevrons-down"></i>
+            </button>
+          </div>
           <div id="preview-content" class="markdown-body">
             <!-- Rendered Markdown goes here -->
           </div>
@@ -292,6 +303,11 @@ console.log('Hello World');
 
   <!-- Custom Context Menu (file tree) -->
   <div id="context-menu" class="context-menu" style="display: none;">
+    <button id="ctx-refresh-sidebar"><i data-lucide="refresh-cw"></i> Refresh</button>
+    <button id="ctx-open-item"><i data-lucide="file-input"></i> Open</button>
+    <button id="ctx-show-in-folder"><i data-lucide="folder-search"></i> Show in Folder</button>
+    <button id="ctx-copy-path"><i data-lucide="copy"></i> Copy Path</button>
+    <div class="ctx-menu-divider"></div>
     <button id="ctx-create-file"><i data-lucide="file-plus"></i> New File</button>
     <button id="ctx-create-folder"><i data-lucide="folder-plus"></i> New Folder</button>
     <button id="ctx-rename-item"><i data-lucide="edit-3"></i> Rename</button>

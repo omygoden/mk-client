@@ -10,13 +10,17 @@ let sidebarFilesData = [];
 // blocking script parse with 30+ synchronous getElementById calls
 let bodyElement, themeDropdown, btnZoomIn, btnZoomOut, btnZoomReset, zoomLevel;
 let markdownTextarea, previewContainer, previewContent, editorContainer;
-let currentFilename, unsavedIndicator, dirTree, outlineView, currentFilepathStatus, paneSortContainer, sortDropdown;
+let liveScrollControls, btnScrollTop, btnScrollBottom;
+let currentFilename, unsavedIndicator, dirTree, outlineView, currentFilepathStatus, paneSortContainer, sortDropdown, btnRefreshSidebar;
 let appSidebar, sidebarExpandHandle, btnToggleSidebar, tabFiles, tabOutline, paneFiles, paneOutline;
 let btnNewFile, btnOpenFile, btnSaveFile, btnModeEdit, btnModeSplit, btnModePreview, btnModeLive, btnExportPdf, btnExportHtml;
 let btnRecent, recentMenu, recentList, btnClearRecent;
-let contextMenu, ctxCreateFile, ctxCreateFolder, ctxRenameItem, ctxDeleteItem;
+let contextMenu, ctxRefreshSidebar, ctxOpenItem, ctxShowInFolder, ctxCopyPath, ctxCreateFile, ctxCreateFolder, ctxRenameItem, ctxDeleteItem;
 let selectedPathForContextMenu = null;
 let selectedIsDir = false;
+let selectedFileTreePaths = new Set();
+let lastSelectedFilePath = null;
+let visibleFilePaths = [];
 let inputModal, modalInputFilename, btnModalCancel, btnModalConfirm;
 let unsavedModal, btnUnsavedCancel, btnUnsavedDiscard, btnUnsavedSave;
 let formatBold, formatItalic, formatHeading, formatCode, formatLink, formatImage, formatTable;
@@ -47,6 +51,7 @@ const APP_ZOOM_MAX = 200;
 let appZoomPercent = 100;
 const RECENT_ITEMS_STORAGE_KEY = 'recent-open-items';
 const MAX_RECENT_ITEMS = 12;
+const EMPTY_LINE_MARKDOWN = '<p><br></p>';
 
 // Editor right-click context menu
 let editorContextMenu;
@@ -62,6 +67,9 @@ function initDOMReferences() {
   markdownTextarea = document.getElementById('markdown-textarea');
   previewContainer = document.getElementById('preview-container');
   previewContent = document.getElementById('preview-content');
+  liveScrollControls = document.getElementById('live-scroll-controls');
+  btnScrollTop = document.getElementById('btn-scroll-top');
+  btnScrollBottom = document.getElementById('btn-scroll-bottom');
   editorContainer = document.getElementById('editor-container');
   currentFilename = document.getElementById('current-filename');
   unsavedIndicator = document.getElementById('unsaved-indicator');
@@ -70,6 +78,7 @@ function initDOMReferences() {
   currentFilepathStatus = document.getElementById('current-filepath-status');
   paneSortContainer = document.getElementById('pane-sort-container');
   sortDropdown = document.getElementById('sort-dropdown');
+  btnRefreshSidebar = document.getElementById('btn-refresh-sidebar');
   appSidebar = document.getElementById('app-sidebar');
   sidebarExpandHandle = document.getElementById('sidebar-expand-handle');
   btnToggleSidebar = document.getElementById('btn-toggle-sidebar');
@@ -91,6 +100,10 @@ function initDOMReferences() {
   btnExportPdf = document.getElementById('btn-export-pdf');
   btnExportHtml = document.getElementById('btn-export-html');
   contextMenu = document.getElementById('context-menu');
+  ctxRefreshSidebar = document.getElementById('ctx-refresh-sidebar');
+  ctxOpenItem = document.getElementById('ctx-open-item');
+  ctxShowInFolder = document.getElementById('ctx-show-in-folder');
+  ctxCopyPath = document.getElementById('ctx-copy-path');
   ctxCreateFile = document.getElementById('ctx-create-file');
   ctxCreateFolder = document.getElementById('ctx-create-folder');
   ctxRenameItem = document.getElementById('ctx-rename-item');
@@ -233,6 +246,24 @@ function setupEventListeners() {
   if (btnZoomIn) btnZoomIn.addEventListener('click', () => changeAppZoom(APP_ZOOM_STEP));
   if (btnZoomReset) btnZoomReset.addEventListener('click', () => setAppZoom(100));
 
+  // --- Live Edit Scroll Controls ---
+  [btnScrollTop, btnScrollBottom].forEach(button => {
+    if (button) button.addEventListener('mousedown', e => e.preventDefault());
+  });
+  if (btnScrollTop) {
+    btnScrollTop.addEventListener('click', () => {
+      previewContainer.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
+  if (btnScrollBottom) {
+    btnScrollBottom.addEventListener('click', () => {
+      previewContainer.scrollTo({ top: previewContainer.scrollHeight, behavior: 'smooth' });
+    });
+  }
+  previewContainer.addEventListener('scroll', updateLiveScrollControls, { passive: true });
+  window.addEventListener('resize', updateLiveScrollControls);
+  previewContainer.addEventListener('mousedown', handleEmptyLiveAreaMouseDown);
+
   // Debounced render for input performance
   let renderTimer = null;
   markdownTextarea.addEventListener('beforeinput', (e) => {
@@ -329,6 +360,7 @@ function setupEventListeners() {
 
   if (btnOpenFolder) btnOpenFolder.addEventListener('click', openFolder);
   if (btnOpenFolderPlaceholder) btnOpenFolderPlaceholder.addEventListener('click', openFolder);
+  if (btnRefreshSidebar) btnRefreshSidebar.addEventListener('click', refreshSidebarDirectory);
 
   // Formatting Helpers
   formatBold.addEventListener('click', () => insertFormatting('**', '**'));
@@ -362,36 +394,26 @@ function setupEventListeners() {
     if (node) {
       selectedPathForContextMenu = node.getAttribute('data-path');
       selectedIsDir = node.classList.contains('directory');
-
-      if (selectedIsDir) {
-        ctxCreateFile.style.display = 'flex';
-        ctxCreateFolder.style.display = 'flex';
-        ctxRenameItem.style.display = 'flex';
-        ctxDeleteItem.style.display = 'flex';
-      } else {
-        ctxCreateFile.style.display = 'none';
-        ctxCreateFolder.style.display = 'none';
-        ctxRenameItem.style.display = 'flex';
-        ctxDeleteItem.style.display = 'flex';
+      if (!selectedIsDir && !selectedFileTreePaths.has(selectedPathForContextMenu)) {
+        selectedFileTreePaths = new Set([selectedPathForContextMenu]);
+        lastSelectedFilePath = selectedPathForContextMenu;
+        updateTreeSelectionClasses();
       }
     } else {
       if (currentSidebarDir) {
         selectedPathForContextMenu = currentSidebarDir;
         selectedIsDir = true;
-
-        ctxCreateFile.style.display = 'flex';
-        ctxCreateFolder.style.display = 'flex';
-        ctxRenameItem.style.display = 'none';
-        ctxDeleteItem.style.display = 'none';
       } else {
         contextMenu.style.display = 'none';
         return;
       }
     }
 
+    updateFileContextMenuState(Boolean(node));
     contextMenu.style.display = 'block';
     contextMenu.style.left = `${e.clientX}px`;
     contextMenu.style.top = `${e.clientY}px`;
+    lucide.createIcons();
   });
 
   // Hide context menu when clicking elsewhere (using capturing phase to bypass child stopPropagation)
@@ -401,16 +423,61 @@ function setupEventListeners() {
     }
   }, true);
 
+  // Refresh sidebar from context menu
+  ctxRefreshSidebar.addEventListener('click', async () => {
+    contextMenu.style.display = 'none';
+    await refreshSidebarDirectory();
+  });
+
+  // Open item from context menu
+  ctxOpenItem.addEventListener('click', async () => {
+    contextMenu.style.display = 'none';
+    await openContextMenuItem();
+  });
+
+  // Reveal item in OS file manager
+  ctxShowInFolder.addEventListener('click', async () => {
+    contextMenu.style.display = 'none';
+    const targetPath = selectedPathForContextMenu;
+    if (!targetPath) return;
+    const result = await window.electronAPI.showItemInFolder(targetPath);
+    if (!result.success) {
+      alert(`Error showing item: ${result.error}`);
+    }
+  });
+
+  // Copy one or more paths to the clipboard
+  ctxCopyPath.addEventListener('click', async () => {
+    contextMenu.style.display = 'none';
+    const paths = getContextTargetPaths();
+    if (paths.length === 0) return;
+    try {
+      const text = paths.join('\n');
+      if (window.electronAPI.copyText) {
+        window.electronAPI.copyText(text);
+      } else {
+        await navigator.clipboard.writeText(text);
+      }
+    } catch (error) {
+      alert(`Error copying path: ${error.message}`);
+    }
+  });
+
   // Create file from context menu
   ctxCreateFile.addEventListener('click', () => {
     contextMenu.style.display = 'none';
+    const parentDir = getContextCreationDirectory();
+    if (!parentDir) {
+      alert('Please select a folder before creating a file.');
+      return;
+    }
     showInputDialog('Create New File', 'Untitled', 'Enter filename', async (val) => {
       if (!val) return;
       let formattedName = val;
       if (!formattedName.endsWith('.md') && !formattedName.endsWith('.markdown') && !formattedName.endsWith('.txt')) {
         formattedName += '.md';
       }
-      const result = await window.electronAPI.createInDir(selectedPathForContextMenu, formattedName);
+      const result = await window.electronAPI.createInDir(parentDir, formattedName);
       if (result.success) {
         if (currentSidebarDir) await loadSidebarDirectory(currentSidebarDir);
         loadFile(result.filePath, '', result.fileName);
@@ -423,9 +490,14 @@ function setupEventListeners() {
   // Create folder from context menu
   ctxCreateFolder.addEventListener('click', () => {
     contextMenu.style.display = 'none';
+    const parentDir = getContextCreationDirectory();
+    if (!parentDir) {
+      alert('Please select a folder before creating a folder.');
+      return;
+    }
     showInputDialog('Create New Folder', 'New Folder', 'Enter folder name', async (val) => {
       if (!val) return;
-      const result = await window.electronAPI.createDir(selectedPathForContextMenu, val);
+      const result = await window.electronAPI.createDir(parentDir, val);
       if (result.success) {
         if (currentSidebarDir) await loadSidebarDirectory(currentSidebarDir);
       } else {
@@ -437,12 +509,14 @@ function setupEventListeners() {
   // Rename item from context menu
   ctxRenameItem.addEventListener('click', () => {
     contextMenu.style.display = 'none';
-    const basename = selectedPathForContextMenu.split(/[/\\]/).pop();
+    const targetPath = selectedPathForContextMenu;
+    if (!targetPath) return;
+    const basename = targetPath.split(/[/\\]/).pop();
     showInputDialog('Rename Item', basename, 'Enter new name', async (val) => {
       if (!val || val === basename) return;
-      const result = await window.electronAPI.renameItem(selectedPathForContextMenu, val);
+      const result = await window.electronAPI.renameItem(targetPath, val);
       if (result.success) {
-        if (selectedPathForContextMenu === currentFilePath) {
+        if (targetPath === currentFilePath) {
           currentFilePath = result.newPath;
           currentFilename.innerText = val;
           currentFilepathStatus.innerText = result.newPath;
@@ -457,17 +531,36 @@ function setupEventListeners() {
   // Delete item from context menu
   ctxDeleteItem.addEventListener('click', async () => {
     contextMenu.style.display = 'none';
-    const basename = selectedPathForContextMenu.split(/[/\\]/).pop();
-    const confirmDelete = confirm(`Are you sure you want to delete "${basename}"?`);
+    const targetPaths = getContextTargetPaths();
+    if (targetPaths.length === 0) return;
+    const label = targetPaths.length === 1
+      ? `"${targetPaths[0].split(/[/\\]/).pop()}"`
+      : `${targetPaths.length} selected items`;
+    const confirmDelete = confirm(`Are you sure you want to delete ${label}?`);
     if (confirmDelete) {
-      const result = await window.electronAPI.deleteItem(selectedPathForContextMenu);
-      if (result.success) {
-        if (selectedPathForContextMenu === currentFilePath) {
+      const errors = [];
+      for (const targetPath of targetPaths) {
+        const result = await window.electronAPI.deleteItem(targetPath);
+        if (result.success) {
+          if (targetPath === currentFilePath) {
+            currentFilePath = null;
+          }
+        } else {
+          errors.push(`${targetPath}: ${result.error}`);
+        }
+      }
+      if (errors.length === 0) {
+        if (!currentFilePath && targetPaths.length > 0) {
           newFile();
         }
-        if (currentSidebarDir) await loadSidebarDirectory(currentSidebarDir);
       } else {
-        alert(`Error deleting item: ${result.error}`);
+        alert(`Some items could not be deleted:\n${errors.join('\n')}`);
+      }
+      selectedFileTreePaths.clear();
+      selectedPathForContextMenu = null;
+      selectedIsDir = false;
+      if (currentSidebarDir) {
+        await loadSidebarDirectory(currentSidebarDir);
       }
     }
   });
@@ -649,6 +742,8 @@ function setupEventListeners() {
       localStorage.setItem('sidebar-sort-by', chosenSort);
       if (sidebarFilesData && sidebarFilesData.length > 0) {
         const sortedTree = sortFiles(sidebarFilesData, chosenSort);
+        visibleFilePaths = collectVisibleFilePaths(sortedTree);
+        pruneSelectedFileTreePaths();
         renderDirectoryTree(sortedTree, dirTree);
       }
     });
@@ -1453,6 +1548,7 @@ function toggleSidebar() {
 function setViewMode(mode) {
   clearSplitScrollSync();
   currentViewMode = mode;
+  previewContainer.classList.toggle('live-view', mode === 'live');
 
   // Update UI Button Styles
   btnModeEdit.classList.toggle('active', mode === 'edit');
@@ -1488,7 +1584,17 @@ function setViewMode(mode) {
     renderLiveEditMode();
   }
 
+  requestAnimationFrame(updateLiveScrollControls);
   focusActiveEditor();
+}
+
+function updateLiveScrollControls() {
+  if (!btnScrollTop || !btnScrollBottom) return;
+
+  const maxScrollTop = Math.max(0, previewContainer.scrollHeight - previewContainer.clientHeight);
+  const isScrollable = maxScrollTop > 2;
+  btnScrollTop.disabled = !isScrollable || previewContainer.scrollTop <= 2;
+  btnScrollBottom.disabled = !isScrollable || previewContainer.scrollTop >= maxScrollTop - 2;
 }
 
 function getRecentItems() {
@@ -1532,6 +1638,37 @@ function closeRecentMenu() {
   if (!recentMenu || !btnRecent) return;
   recentMenu.classList.remove('open');
   btnRecent.setAttribute('aria-expanded', 'false');
+}
+
+function getContextCreationDirectory() {
+  if (selectedIsDir && selectedPathForContextMenu) {
+    return selectedPathForContextMenu;
+  }
+  return currentSidebarDir;
+}
+
+function getContextTargetPaths() {
+  if (selectedPathForContextMenu && selectedFileTreePaths.has(selectedPathForContextMenu)) {
+    return Array.from(selectedFileTreePaths);
+  }
+  return selectedPathForContextMenu ? [selectedPathForContextMenu] : [];
+}
+
+function updateFileContextMenuState(hasNodeTarget) {
+  const targetPaths = getContextTargetPaths();
+  const selectedCount = targetPaths.length;
+  const isSingle = selectedCount === 1;
+  const canCreateInTarget = selectedIsDir || !hasNodeTarget;
+
+  ctxRefreshSidebar.style.display = currentSidebarDir ? 'flex' : 'none';
+  ctxOpenItem.style.display = isSingle && hasNodeTarget ? 'flex' : 'none';
+  ctxShowInFolder.style.display = isSingle && hasNodeTarget ? 'flex' : 'none';
+  ctxCopyPath.style.display = selectedCount > 0 ? 'flex' : 'none';
+  ctxCreateFile.style.display = canCreateInTarget ? 'flex' : 'none';
+  ctxCreateFolder.style.display = canCreateInTarget ? 'flex' : 'none';
+  ctxRenameItem.style.display = isSingle && hasNodeTarget ? 'flex' : 'none';
+  ctxDeleteItem.style.display = selectedCount > 0 && hasNodeTarget ? 'flex' : 'none';
+  ctxDeleteItem.innerHTML = `<i data-lucide="trash-2"></i> ${selectedCount > 1 ? `Delete ${selectedCount} Items` : 'Delete'}`;
 }
 
 function getPathDisplayName(itemPath) {
@@ -1593,7 +1730,6 @@ async function openRecentItem(item) {
       return;
     }
     currentSidebarDir = item.path;
-    addRecentItem('folder', item.path);
     document.getElementById('btn-new-file-sidebar').style.display = 'flex';
     return;
   }
@@ -1824,6 +1960,7 @@ async function openFile() {
   const fileData = await window.electronAPI.openFile();
   if (fileData) {
     loadFile(fileData.filePath, fileData.content, fileData.fileName);
+    addRecentItem('file', fileData.filePath);
   } else {
     focusActiveEditor(previousOffset);
   }
@@ -1839,7 +1976,6 @@ function loadFile(filePath, content, fileName) {
 
   currentFilename.innerText = fileName;
   currentFilepathStatus.innerText = filePath;
-  addRecentItem('file', filePath);
 
   // Highlight active file in sidebar if it exists
   document.querySelectorAll('.tree-node.file').forEach(node => {
@@ -1862,6 +1998,11 @@ function loadFile(filePath, content, fileName) {
 
 // 3. Save File
 async function saveFile() {
+  if (currentViewMode === 'live') {
+    initTurndown();
+    syncLiveContentToTextarea();
+  }
+
   const content = markdownTextarea.value;
   const previousOffset = getActiveEditorOffset();
 
@@ -1894,7 +2035,6 @@ async function saveFile() {
         const fileName = parts[parts.length - 1];
         currentFilename.innerText = fileName;
         currentFilepathStatus.innerText = newPath;
-        addRecentItem('file', newPath);
 
         // If sidebar directory is open, refresh it to include the new file
         if (currentSidebarDir) {
@@ -1933,6 +2073,28 @@ async function openFolder() {
   focusActiveEditor(previousOffset);
 }
 
+async function refreshSidebarDirectory() {
+  if (!currentSidebarDir) return false;
+  return loadSidebarDirectory(currentSidebarDir);
+}
+
+async function openContextMenuItem() {
+  const targetPath = selectedPathForContextMenu;
+  if (!targetPath) return;
+
+  if (selectedIsDir) {
+    if (openDirectories.has(targetPath)) {
+      openDirectories.delete(targetPath);
+    } else {
+      openDirectories.add(targetPath);
+    }
+    if (currentSidebarDir) await loadSidebarDirectory(currentSidebarDir);
+    return;
+  }
+
+  await openSidebarFile(targetPath);
+}
+
 // Refresh/Load Directory Tree
 async function loadSidebarDirectory(dirPath) {
   const result = await window.electronAPI.listMarkdown(dirPath);
@@ -1940,20 +2102,107 @@ async function loadSidebarDirectory(dirPath) {
     sidebarFilesData = result.files;
     const currentSort = sortDropdown ? sortDropdown.value : (localStorage.getItem('sidebar-sort-by') || 'name');
     const sortedTree = sortFiles(sidebarFilesData, currentSort);
+    visibleFilePaths = collectVisibleFilePaths(sortedTree);
+    pruneSelectedFileTreePaths();
     renderDirectoryTree(sortedTree, dirTree);
     if (paneSortContainer) {
       paneSortContainer.style.display = 'block';
     }
+    if (btnRefreshSidebar) {
+      btnRefreshSidebar.style.display = 'flex';
+    }
     return true;
   } else {
     sidebarFilesData = [];
+    visibleFilePaths = [];
+    selectedFileTreePaths.clear();
     dirTree.innerHTML = `<div class="tree-placeholder"><p>Error loading folder: ${result.error}</p></div>`;
     if (paneSortContainer) {
       paneSortContainer.style.display = 'none';
     }
+    if (btnRefreshSidebar) {
+      btnRefreshSidebar.style.display = 'none';
+    }
     alert(`Error loading folder: ${result.error}`);
     return false;
   }
+}
+
+function collectVisibleFilePaths(files) {
+  const paths = [];
+  const walk = (items) => {
+    items.forEach((item) => {
+      if (item.isDirectory) {
+        if (openDirectories.has(item.path) && item.children) {
+          walk(item.children);
+        }
+        return;
+      }
+      paths.push(item.path);
+    });
+  };
+  walk(files || []);
+  return paths;
+}
+
+function refreshVisibleFilePathsFromData() {
+  const currentSort = sortDropdown ? sortDropdown.value : (localStorage.getItem('sidebar-sort-by') || 'name');
+  visibleFilePaths = collectVisibleFilePaths(sortFiles(sidebarFilesData, currentSort));
+  pruneSelectedFileTreePaths();
+}
+
+function pruneSelectedFileTreePaths() {
+  const available = new Set(visibleFilePaths);
+  selectedFileTreePaths = new Set(Array.from(selectedFileTreePaths).filter((itemPath) => available.has(itemPath)));
+  if (lastSelectedFilePath && !available.has(lastSelectedFilePath)) {
+    lastSelectedFilePath = selectedFileTreePaths.size ? Array.from(selectedFileTreePaths).at(-1) : null;
+  }
+}
+
+function updateTreeSelectionClasses() {
+  document.querySelectorAll('.tree-node.file').forEach((node) => {
+    node.classList.toggle('selected', selectedFileTreePaths.has(node.getAttribute('data-path')));
+  });
+}
+
+function updateFileTreeSelection(filePath, event) {
+  if (event.shiftKey && lastSelectedFilePath) {
+    const startIndex = visibleFilePaths.indexOf(lastSelectedFilePath);
+    const endIndex = visibleFilePaths.indexOf(filePath);
+    if (startIndex !== -1 && endIndex !== -1) {
+      const [from, to] = startIndex < endIndex ? [startIndex, endIndex] : [endIndex, startIndex];
+      selectedFileTreePaths = new Set(visibleFilePaths.slice(from, to + 1));
+    } else {
+      selectedFileTreePaths = new Set([filePath]);
+    }
+  } else if (event.ctrlKey || event.metaKey) {
+    if (selectedFileTreePaths.has(filePath)) {
+      selectedFileTreePaths.delete(filePath);
+    } else {
+      selectedFileTreePaths.add(filePath);
+    }
+    lastSelectedFilePath = filePath;
+  } else {
+    selectedFileTreePaths = new Set([filePath]);
+    lastSelectedFilePath = filePath;
+  }
+
+  updateTreeSelectionClasses();
+}
+
+async function openSidebarFile(filePath) {
+  const previousOffset = getActiveEditorOffset();
+  if (!await confirmFileTransition(previousOffset)) return false;
+
+  const readResult = await window.electronAPI.readFile(filePath);
+  if (readResult.success) {
+    loadFile(filePath, readResult.content, readResult.fileName || filePath.split(/[/\\]/).pop());
+    return true;
+  }
+
+  alert(`Error reading file: ${readResult.error}`);
+  focusActiveEditor(previousOffset);
+  return false;
 }
 
 // Sort Directory Tree recursively
@@ -2044,25 +2293,39 @@ function renderDirectoryTree(files, container, depth = 0) {
     if (currentFilePath === file.path) {
       node.classList.add('active');
     }
+    if (!file.isDirectory && selectedFileTreePaths.has(file.path)) {
+      node.classList.add('selected');
+    }
 
     // Set indentation
     node.style.paddingLeft = `${12 + depth * 16}px`;
 
     // Inner icon & text
     let iconName = file.isDirectory ? 'folder' : 'file-text';
+    let chevronName = 'chevron-right';
     if (file.isDirectory && openDirectories.has(file.path)) {
       iconName = 'folder-open';
+      chevronName = 'chevron-down';
     }
 
-    node.innerHTML = `
-      <i data-lucide="${iconName}"></i>
-      <span class="node-name">${file.name}</span>
-    `;
+    node.innerHTML = file.isDirectory
+      ? `
+        <i class="node-chevron" data-lucide="${chevronName}"></i>
+        <i class="node-icon" data-lucide="${iconName}"></i>
+        <span class="node-name">${file.name}</span>
+      `
+      : `
+        <i class="node-spacer" data-lucide="minus"></i>
+        <i class="node-icon" data-lucide="${iconName}"></i>
+        <span class="node-name">${file.name}</span>
+      `;
 
     container.appendChild(node);
 
     // Event click handlers
     if (file.isDirectory) {
+      makeTreeNodeDraggable(node, file);
+
       // Sub-node container
       const subContainer = document.createElement('div');
       subContainer.className = 'tree-sub-container';
@@ -2080,12 +2343,16 @@ function renderDirectoryTree(files, container, depth = 0) {
         if (isOpen) {
           openDirectories.delete(file.path);
           subContainer.style.display = 'none';
-          node.querySelector('i').setAttribute('data-lucide', 'folder');
+          node.querySelector('.node-chevron').setAttribute('data-lucide', 'chevron-right');
+          node.querySelector('.node-icon').setAttribute('data-lucide', 'folder');
         } else {
           openDirectories.add(file.path);
           subContainer.style.display = 'block';
-          node.querySelector('i').setAttribute('data-lucide', 'folder-open');
+          node.querySelector('.node-chevron').setAttribute('data-lucide', 'chevron-down');
+          node.querySelector('.node-icon').setAttribute('data-lucide', 'folder-open');
         }
+        refreshVisibleFilePathsFromData();
+        updateTreeSelectionClasses();
         lucide.createIcons();
       });
 
@@ -2104,53 +2371,89 @@ function renderDirectoryTree(files, container, depth = 0) {
         e.stopPropagation();
         node.classList.remove('drag-over');
 
-        const srcPath = e.dataTransfer.getData('text/plain');
+        const transferPaths = e.dataTransfer.getData('application/x-markdown-edit-paths');
+        const fallbackPath = e.dataTransfer.getData('text/plain');
+        let srcPaths = [fallbackPath].filter(Boolean);
+        if (transferPaths) {
+          try {
+            const parsedPaths = JSON.parse(transferPaths);
+            if (Array.isArray(parsedPaths)) {
+              srcPaths = parsedPaths.filter(Boolean);
+            }
+          } catch {
+            srcPaths = [fallbackPath].filter(Boolean);
+          }
+        }
         const destDir = file.path;
 
-        if (srcPath && srcPath !== destDir) {
-          const result = await window.electronAPI.moveItem(srcPath, destDir);
-          if (result.success) {
-            if (srcPath === currentFilePath) {
-              currentFilePath = result.newPath;
-              currentFilepathStatus.innerText = result.newPath;
-            }
-            if (currentSidebarDir) await loadSidebarDirectory(currentSidebarDir);
-          } else {
-            alert(`Error moving item: ${result.error}`);
+        if (srcPaths.length > 0 && !srcPaths.includes(destDir)) {
+          const result = await window.electronAPI.moveItems(srcPaths, destDir);
+          if (result.moved && result.moved.length > 0) {
+            result.moved.forEach((movedItem) => {
+              if (movedItem.oldPath === currentFilePath) {
+                currentFilePath = movedItem.newPath;
+                currentFilepathStatus.innerText = movedItem.newPath;
+              }
+            });
+            selectedFileTreePaths = new Set(result.moved.map((movedItem) => movedItem.newPath));
+            lastSelectedFilePath = result.moved.at(-1).newPath;
+          }
+          if (currentSidebarDir) await loadSidebarDirectory(currentSidebarDir);
+          if (!result.success) {
+            const details = result.errors && result.errors.length
+              ? result.errors.map((item) => `${item.path}: ${item.error}`).join('\n')
+              : result.error;
+            alert(`Some items could not be moved:\n${details}`);
           }
         }
       });
     } else {
-      // Make file node draggable
-      node.draggable = true;
-      node.addEventListener('dragstart', (e) => {
-        e.stopPropagation();
-        e.dataTransfer.setData('text/plain', file.path);
-        e.dataTransfer.effectAllowed = 'move';
-        node.style.opacity = '0.5';
-      });
-      node.addEventListener('dragend', (e) => {
-        node.style.opacity = '1';
-      });
+      makeTreeNodeDraggable(node, file);
 
       node.addEventListener('click', async (e) => {
         e.stopPropagation();
-        const previousOffset = getActiveEditorOffset();
-        if (!await confirmFileTransition(previousOffset)) return;
-
-        const readResult = await window.electronAPI.readFile(file.path);
-        if (readResult.success) {
-          loadFile(file.path, readResult.content, file.name);
-        } else {
-          alert(`Error reading file: ${readResult.error}`);
-          focusActiveEditor(previousOffset);
+        updateFileTreeSelection(file.path, e);
+        if (e.ctrlKey || e.metaKey || e.shiftKey) {
+          return;
         }
+        await openSidebarFile(file.path);
       });
     }
   });
 
   // Re-create icons for new elements
   lucide.createIcons();
+}
+
+function makeTreeNodeDraggable(node, file) {
+  node.draggable = true;
+  node.addEventListener('dragstart', (e) => {
+    e.stopPropagation();
+
+    let paths = [file.path];
+    if (!file.isDirectory) {
+      if (!selectedFileTreePaths.has(file.path)) {
+        selectedFileTreePaths = new Set([file.path]);
+        lastSelectedFilePath = file.path;
+        updateTreeSelectionClasses();
+      }
+      paths = Array.from(selectedFileTreePaths);
+    }
+
+    e.dataTransfer.setData('application/x-markdown-edit-paths', JSON.stringify(paths));
+    e.dataTransfer.setData('text/plain', file.path);
+    e.dataTransfer.effectAllowed = 'move';
+
+    node.classList.add('dragging');
+    document.querySelectorAll('.tree-node.file.selected').forEach((selectedNode) => {
+      selectedNode.classList.add('dragging');
+    });
+  });
+  node.addEventListener('dragend', () => {
+    document.querySelectorAll('.tree-node.dragging').forEach((draggingNode) => {
+      draggingNode.classList.remove('dragging');
+    });
+  });
 }
 
 // --- Export Functions ---
@@ -2246,16 +2549,6 @@ function initTurndown() {
       }
     });
 
-    // Custom rule to preserve blank paragraphs or simple lines
-    // Matches both truly empty <p></p> and <p><br></p> (browser-created empty lines)
-    turndownService.addRule('emptyParagraphs', {
-      filter: (node) => {
-        if (node.nodeName !== 'P') return false;
-        const html = node.innerHTML.trim();
-        return html === '' || html === '<br>';
-      },
-      replacement: () => '\n\n'
-    });
   }
 }
 
@@ -2291,6 +2584,19 @@ function setCaretCharOffset(container, offset) {
     }
     currentOffset += nodeLen;
   }
+
+  // An empty live document contains only <p><br></p>, so there is no text
+  // node for the walker to target. Put the caret inside its first block.
+  if (offset === 0 && container.firstElementChild) {
+    const range = document.createRange();
+    range.setStart(container.firstElementChild, 0);
+    range.collapse(true);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    return;
+  }
+
   // If offset exceeds content length, place cursor at end
   const range = document.createRange();
   range.selectNodeContents(container);
@@ -2336,22 +2642,31 @@ function getCurrentBlockIndex() {
 function parseMarkdownPreservingEmptyLines(markdown) {
   if (!markdown.trim()) return '<p><br></p>';
 
-  // Detect runs of 3+ newlines (meaning extra blank lines beyond normal paragraph break)
-  // and insert &nbsp; placeholder paragraphs so marked.parse() keeps them
+  // Detect runs of 3+ newlines in older files and upgrade them to explicit
+  // HTML paragraphs. Markdown normally collapses these runs.
   const processed = markdown.replace(/\n{3,}/g, (match) => {
     const extraBlanks = Math.max(1, Math.floor((match.length - 1) / 2));
     let result = '\n\n';
     for (let i = 0; i < extraBlanks; i++) {
-      result += '&nbsp;\n\n';
+      result += `${EMPTY_LINE_MARKDOWN}\n\n`;
     }
     return result;
   });
 
   let html = marked.parse(processed);
-  // Convert &nbsp; placeholders back to proper empty paragraphs
+  // Normalize legacy placeholders to editable blank paragraphs.
   html = html.replace(/<p>&nbsp;<\/p>/g, '<p><br></p>');
   html = html.replace(/<p>\u00A0<\/p>/g, '<p><br></p>');
   return DOMPurify.sanitize(html);
+}
+
+function handleEmptyLiveAreaMouseDown(event) {
+  if (currentViewMode !== 'live' || markdownTextarea.value.trim() !== '') return;
+  if (event.target.closest('.live-scroll-controls')) return;
+
+  event.preventDefault();
+  previewContent.focus({ preventScroll: true });
+  setCaretCharOffset(previewContent, 0);
 }
 
 function renderLiveEditMode() {
@@ -2381,6 +2696,8 @@ function renderLiveEditMode() {
 
   previewContent.removeEventListener('blur', handleLiveEditBlur);
   previewContent.addEventListener('blur', handleLiveEditBlur);
+
+  requestAnimationFrame(updateLiveScrollControls);
 }
 
 // Re-render ONLY the single block that was just left — all other blocks
@@ -2434,15 +2751,46 @@ function handleLiveMouseUp() {
 }
 
 // Sync contentEditable HTML → markdown textarea (no re-render)
+function isEmptyLiveBlock(node) {
+  if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
+  if (node.nodeName !== 'P' && node.nodeName !== 'DIV') return false;
+
+  const clone = node.cloneNode(true);
+  clone.querySelectorAll('br').forEach(br => br.remove());
+  const text = (clone.textContent || '').replace(/\u00a0/g, '').trim();
+  const hasVisibleMedia = Boolean(clone.querySelector('img, video, audio, iframe, table, hr, input, svg, canvas'));
+  return text === '' && !hasVisibleMedia;
+}
+
+function serializeLiveEditMarkdown() {
+  const blocks = Array.from(previewContent.childNodes).map(node => {
+    if (isEmptyLiveBlock(node)) {
+      return EMPTY_LINE_MARKDOWN;
+    }
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      return node.textContent.trim();
+    }
+
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      return turndownService.turndown(node.outerHTML).trim();
+    }
+
+    return '';
+  }).filter(Boolean);
+
+  // A single browser-created empty paragraph means the document is empty.
+  if (blocks.length === 1 && blocks[0] === EMPTY_LINE_MARKDOWN) {
+    return '';
+  }
+
+  return blocks.join('\n\n');
+}
+
 function syncLiveContentToTextarea() {
   if (!turndownService) return;
 
-  let html = previewContent.innerHTML;
-  if (html.trim() === '' || html === '<br>') {
-    html = '<p><br></p>';
-  }
-
-  const markdown = turndownService.turndown(html);
+  const markdown = serializeLiveEditMarkdown();
 
   if (markdownTextarea.value !== markdown) {
     markdownTextarea.value = markdown;
@@ -2456,6 +2804,7 @@ function syncLiveContentToTextarea() {
 function handleLiveEditInput() {
   // Only sync HTML→Markdown, do NOT re-render while user is typing
   syncLiveContentToTextarea();
+  requestAnimationFrame(updateLiveScrollControls);
   // Mark the current block as modified so it gets re-rendered when user clicks away
   const idx = getCurrentBlockIndex();
   if (idx !== -1) {
@@ -2487,6 +2836,8 @@ function showInputDialog(title, defaultValue, placeholder, confirmCallback) {
   currentModalCallback = confirmCallback;
 
   inputModal.style.display = 'flex';
-  modalInputFilename.focus();
-  modalInputFilename.select();
+  requestAnimationFrame(() => {
+    modalInputFilename.focus();
+    modalInputFilename.select();
+  });
 }
