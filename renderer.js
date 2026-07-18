@@ -255,12 +255,12 @@ function setupEventListeners() {
   });
   if (btnScrollTop) {
     btnScrollTop.addEventListener('click', () => {
-      previewContainer.scrollTo({ top: 0, behavior: 'smooth' });
+      previewContainer.scrollTo({ top: 0 });
     });
   }
   if (btnScrollBottom) {
     btnScrollBottom.addEventListener('click', () => {
-      previewContainer.scrollTo({ top: previewContainer.scrollHeight, behavior: 'smooth' });
+      previewContainer.scrollTo({ top: previewContainer.scrollHeight });
     });
   }
   previewContainer.addEventListener('scroll', () => {
@@ -1046,19 +1046,77 @@ function restoreLiveSelectionState(selectionState) {
   return true;
 }
 
-function focusActiveEditor(offset = null, liveSelection = null) {
+function getSelectionRangeRect() {
+  const selection = window.getSelection();
+  if (!selection.rangeCount || !previewContent.contains(selection.anchorNode)) return null;
+
+  const range = selection.getRangeAt(0).cloneRange();
+  let rect = range.getBoundingClientRect();
+  if (rect && (rect.width || rect.height)) return rect;
+
+  const marker = document.createElement('span');
+  marker.textContent = '\u200b';
+  range.insertNode(marker);
+  rect = marker.getBoundingClientRect();
+  marker.remove();
+  return rect;
+}
+
+function scrollLiveEditorToCaret() {
+  const rect = getSelectionRangeRect();
+  if (!rect) return;
+
+  const containerRect = previewContainer.getBoundingClientRect();
+  const topPadding = Math.max(24, previewContainer.clientHeight * 0.18);
+  const bottomPadding = Math.max(24, previewContainer.clientHeight * 0.18);
+
+  if (rect.top < containerRect.top + topPadding) {
+    previewContainer.scrollTop -= (containerRect.top + topPadding) - rect.top;
+  } else if (rect.bottom > containerRect.bottom - bottomPadding) {
+    previewContainer.scrollTop += rect.bottom - (containerRect.bottom - bottomPadding);
+  }
+
+  updateActiveLiveHeading();
+}
+
+function scrollTextareaToCaret(offset) {
+  if (offset === null || offset === undefined) return;
+
+  const textBeforeCaret = markdownTextarea.value.substring(0, offset);
+  const lineIndex = textBeforeCaret.split('\n').length - 1;
+  const computedStyle = window.getComputedStyle(markdownTextarea);
+  const lineHeight = Number.parseFloat(computedStyle.lineHeight) || 25.5;
+  const targetTop = Math.max(0, (lineIndex * lineHeight) - (markdownTextarea.clientHeight * 0.35));
+  markdownTextarea.scrollTop = targetTop;
+}
+
+function scrollActiveEditorToCaret(offset = null) {
+  if (currentViewMode === 'live') {
+    scrollLiveEditorToCaret();
+  } else if (currentViewMode !== 'preview') {
+    scrollTextareaToCaret(offset);
+  }
+}
+
+function focusActiveEditor(offset = null, liveSelection = null, options = {}) {
+  const { scrollToCaret = false } = options;
   const restoreFocus = () => {
     if (currentViewMode === 'live') {
       previewContent.focus({ preventScroll: true });
-      if (restoreLiveSelectionState(liveSelection)) return;
-      const currentOffset = getCaretCharOffset(previewContent);
-      setCaretCharOffset(previewContent, offset ?? (currentOffset >= 0 ? currentOffset : 0));
+      const restoredSelection = restoreLiveSelectionState(liveSelection);
+      if (!restoredSelection) {
+        const currentOffset = getCaretCharOffset(previewContent);
+        setCaretCharOffset(previewContent, offset ?? (currentOffset >= 0 ? currentOffset : 0));
+      }
     } else if (currentViewMode !== 'preview') {
       markdownTextarea.focus({ preventScroll: true });
       if (offset !== null) {
         const safeOffset = Math.max(0, Math.min(offset, markdownTextarea.value.length));
         markdownTextarea.setSelectionRange(safeOffset, safeOffset);
       }
+    }
+    if (scrollToCaret) {
+      scrollActiveEditorToCaret(offset);
     }
   };
 
@@ -1123,7 +1181,7 @@ function restoreEditorState(state) {
   }
 
   const offset = Math.max(0, Math.min(state.selectionStart, state.content.length));
-  focusActiveEditor(offset, state.liveSelection);
+  focusActiveEditor(offset, state.liveSelection, { scrollToCaret: true });
   isRestoringHistory = false;
 }
 
@@ -2140,6 +2198,13 @@ function generateOutline() {
   });
 }
 
+function getLiveHeadingNavLabel(text) {
+  const normalizedText = (text || '').trim();
+  return normalizedText.length > 10
+    ? `${normalizedText.slice(0, 10)}...`
+    : normalizedText;
+}
+
 function renderLiveHeadingNav(headers) {
   if (!liveHeadingNav) return;
   liveHeadingNav.replaceChildren();
@@ -2156,7 +2221,7 @@ function renderLiveHeadingNav(headers) {
     button.className = `live-heading-nav-item h${header.level}`;
     button.dataset.line = String(header.lineIndex);
     button.title = header.text;
-    button.textContent = header.text;
+    button.textContent = getLiveHeadingNavLabel(header.text);
     button.addEventListener('mousedown', (event) => event.preventDefault());
     button.addEventListener('click', () => scrollToLiveHeading(header.lineIndex));
     liveHeadingNav.appendChild(button);
