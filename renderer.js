@@ -10,7 +10,7 @@ let sidebarFilesData = [];
 // blocking script parse with 30+ synchronous getElementById calls
 let bodyElement, themeDropdown, btnZoomIn, btnZoomOut, btnZoomReset, zoomLevel;
 let markdownTextarea, previewContainer, previewContent, editorContainer;
-let liveScrollControls, btnScrollTop, btnScrollBottom;
+let liveScrollControls, liveHeadingNav, btnScrollTop, btnScrollBottom;
 let currentFilename, unsavedIndicator, dirTree, outlineView, currentFilepathStatus, paneSortContainer, sortDropdown, btnRefreshSidebar;
 let appSidebar, sidebarExpandHandle, btnToggleSidebar, tabFiles, tabOutline, paneFiles, paneOutline;
 let btnNewFile, btnOpenFile, btnSaveFile, btnModeEdit, btnModeSplit, btnModePreview, btnModeLive, btnExportPdf, btnExportHtml;
@@ -69,6 +69,7 @@ function initDOMReferences() {
   previewContainer = document.getElementById('preview-container');
   previewContent = document.getElementById('preview-content');
   liveScrollControls = document.getElementById('live-scroll-controls');
+  liveHeadingNav = document.getElementById('live-heading-nav');
   btnScrollTop = document.getElementById('btn-scroll-top');
   btnScrollBottom = document.getElementById('btn-scroll-bottom');
   editorContainer = document.getElementById('editor-container');
@@ -261,7 +262,10 @@ function setupEventListeners() {
       previewContainer.scrollTo({ top: previewContainer.scrollHeight, behavior: 'smooth' });
     });
   }
-  previewContainer.addEventListener('scroll', updateLiveScrollControls, { passive: true });
+  previewContainer.addEventListener('scroll', () => {
+    updateLiveScrollControls();
+    updateActiveLiveHeading();
+  }, { passive: true });
   window.addEventListener('resize', updateLiveScrollControls);
   previewContainer.addEventListener('mousedown', handleEmptyLiveAreaMouseDown);
 
@@ -2062,7 +2066,7 @@ function renderMarkdown() {
 }
 
 // --- Document Outline Generator ---
-function generateOutline() {
+function getMarkdownHeaders() {
   const text = markdownTextarea.value;
   const lines = text.split('\n');
   const headers = [];
@@ -2080,6 +2084,13 @@ function generateOutline() {
       });
     }
   });
+
+  return headers;
+}
+
+function generateOutline() {
+  const headers = getMarkdownHeaders();
+  renderLiveHeadingNav(headers);
 
   if (headers.length === 0) {
     outlineView.innerHTML = `
@@ -2102,11 +2113,38 @@ function generateOutline() {
   outlineView.innerHTML = outlineHtml;
 
   // Outline navigation click handlers
-  document.querySelectorAll('.outline-item').forEach(item => {
+  outlineView.querySelectorAll('.outline-item').forEach(item => {
     item.addEventListener('click', (e) => {
       const lineIndex = parseInt(e.target.getAttribute('data-line'));
-      scrollToLine(lineIndex);
+      if (currentViewMode === 'live') {
+        scrollToLiveHeading(lineIndex);
+      } else {
+        scrollToLine(lineIndex);
+      }
     });
+  });
+}
+
+function renderLiveHeadingNav(headers) {
+  if (!liveHeadingNav) return;
+  liveHeadingNav.replaceChildren();
+
+  if (headers.length === 0) {
+    liveHeadingNav.classList.add('empty');
+    return;
+  }
+
+  liveHeadingNav.classList.remove('empty');
+  headers.forEach((header) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `live-heading-nav-item h${header.level}`;
+    button.dataset.line = String(header.lineIndex);
+    button.title = header.text;
+    button.textContent = header.text;
+    button.addEventListener('mousedown', (event) => event.preventDefault());
+    button.addEventListener('click', () => scrollToLiveHeading(header.lineIndex));
+    liveHeadingNav.appendChild(button);
   });
 }
 
@@ -2128,6 +2166,51 @@ function scrollToLine(lineIndex) {
   const textareaHeight = markdownTextarea.clientHeight;
   // ~25.5px line height
   markdownTextarea.scrollTop = (lineIndex * 25.5) - (textareaHeight / 4);
+}
+
+function scrollToLiveHeading(lineIndex) {
+  if (currentViewMode !== 'live') {
+    scrollToLine(lineIndex);
+    return;
+  }
+
+  const heading = Array.from(previewContent.querySelectorAll('h1, h2, h3, h4, h5, h6'))[getLiveHeadingIndexForLine(lineIndex)];
+  if (!heading) {
+    scrollToLine(lineIndex);
+    return;
+  }
+
+  const targetTop = heading.offsetTop - Math.max(12, previewContainer.clientHeight * 0.12);
+  previewContainer.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
+  requestAnimationFrame(() => updateActiveLiveHeading(heading));
+}
+
+function getLiveHeadingIndexForLine(lineIndex) {
+  const headers = getMarkdownHeaders();
+  return headers.findIndex((header) => header.lineIndex === lineIndex);
+}
+
+function updateActiveLiveHeading(activeHeading = null) {
+  if (!liveHeadingNav || currentViewMode !== 'live') return;
+  const headings = Array.from(previewContent.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+  const headerButtons = Array.from(liveHeadingNav.querySelectorAll('.live-heading-nav-item'));
+  if (headings.length === 0 || headerButtons.length === 0) return;
+
+  let activeIndex = activeHeading ? headings.indexOf(activeHeading) : -1;
+  if (activeIndex === -1) {
+    const threshold = previewContainer.scrollTop + Math.max(24, previewContainer.clientHeight * 0.16);
+    for (let index = headings.length - 1; index >= 0; index--) {
+      if (headings[index].offsetTop <= threshold) {
+        activeIndex = index;
+        break;
+      }
+    }
+    if (activeIndex === -1) activeIndex = 0;
+  }
+
+  headerButtons.forEach((button, index) => {
+    button.classList.toggle('active', index === activeIndex);
+  });
 }
 
 // --- File Operations ---
@@ -2928,6 +3011,7 @@ function parseMarkdownPreservingEmptyLines(markdown) {
 function handleEmptyLiveAreaMouseDown(event) {
   if (currentViewMode !== 'live' || markdownTextarea.value.trim() !== '') return;
   if (event.target.closest('.live-scroll-controls')) return;
+  if (event.target.closest('.live-heading-nav')) return;
 
   event.preventDefault();
   previewContent.focus({ preventScroll: true });
@@ -2963,6 +3047,8 @@ function renderLiveEditMode() {
   previewContent.addEventListener('blur', handleLiveEditBlur);
 
   requestAnimationFrame(updateLiveScrollControls);
+  renderLiveHeadingNav(getMarkdownHeaders());
+  requestAnimationFrame(updateActiveLiveHeading);
 }
 
 // Re-render ONLY the single block that was just left — all other blocks
