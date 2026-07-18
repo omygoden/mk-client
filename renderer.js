@@ -1102,8 +1102,27 @@ function scrollActiveEditorToCaret(offset = null) {
   }
 }
 
+function restoreEditorScrollTop(scrollTop) {
+  if (!Number.isFinite(scrollTop)) return false;
+
+  if (currentViewMode === 'live') {
+    previewContainer.scrollTop = Math.max(0, scrollTop);
+    updateLiveHeadingNavPosition();
+    updateActiveLiveHeading();
+    updateLiveScrollControls();
+    return true;
+  }
+
+  if (currentViewMode !== 'preview') {
+    markdownTextarea.scrollTop = Math.max(0, scrollTop);
+    return true;
+  }
+
+  return false;
+}
+
 function focusActiveEditor(offset = null, liveSelection = null, options = {}) {
-  const { scrollToCaret = false } = options;
+  const { scrollToCaret = false, scrollTop = null } = options;
   const restoreFocus = () => {
     if (currentViewMode === 'live') {
       previewContent.focus({ preventScroll: true });
@@ -1119,7 +1138,8 @@ function focusActiveEditor(offset = null, liveSelection = null, options = {}) {
         markdownTextarea.setSelectionRange(safeOffset, safeOffset);
       }
     }
-    if (scrollToCaret) {
+    const restoredScrollTop = restoreEditorScrollTop(scrollTop);
+    if (scrollToCaret && !restoredScrollTop) {
       scrollActiveEditorToCaret(offset);
     }
   };
@@ -1146,7 +1166,9 @@ function captureEditorState() {
     content: markdownTextarea.value,
     selectionStart: liveOffset >= 0 ? liveOffset : markdownTextarea.selectionStart,
     selectionEnd: liveOffset >= 0 ? liveOffset : markdownTextarea.selectionEnd,
-    liveSelection: currentViewMode === 'live' ? captureLiveSelectionState() : null
+    liveSelection: currentViewMode === 'live' ? captureLiveSelectionState() : null,
+    liveScrollTop: previewContainer ? previewContainer.scrollTop : 0,
+    textareaScrollTop: markdownTextarea ? markdownTextarea.scrollTop : 0
   };
 }
 
@@ -1185,7 +1207,8 @@ function restoreEditorState(state) {
   }
 
   const offset = Math.max(0, Math.min(state.selectionStart, state.content.length));
-  focusActiveEditor(offset, state.liveSelection, { scrollToCaret: true });
+  const scrollTop = currentViewMode === 'live' ? state.liveScrollTop : state.textareaScrollTop;
+  focusActiveEditor(offset, state.liveSelection, { scrollToCaret: true, scrollTop });
   isRestoringHistory = false;
 }
 
