@@ -1092,7 +1092,7 @@ body {
 }
 
 #preview-container.live-view .markdown-body {
-  padding-left: 220px;
+  padding-left: 205px;
 }
 
 @media (max-width: 1320px) {
@@ -1101,7 +1101,7 @@ body {
   }
 
   #preview-container.live-view .markdown-body {
-    padding-left: 200px;
+    padding-left: 190px;
   }
 }
 

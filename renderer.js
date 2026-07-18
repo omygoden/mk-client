@@ -2204,8 +2204,8 @@ function generateOutline() {
 
 function getLiveHeadingNavLabel(text) {
   const normalizedText = (text || '').trim();
-  return normalizedText.length > 10
-    ? `${normalizedText.slice(0, 10)}...`
+  return normalizedText.length > 15
+    ? `${normalizedText.slice(0, 15)}...`
     : normalizedText;
 }
 
@@ -2272,7 +2272,7 @@ function scrollToLiveHeading(lineIndex) {
   }
 
   const targetTop = heading.offsetTop - Math.max(12, previewContainer.clientHeight * 0.12);
-  previewContainer.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
+  previewContainer.scrollTo({ top: Math.max(0, targetTop) });
   requestAnimationFrame(() => updateActiveLiveHeading(heading));
 }
 
