@@ -472,7 +472,7 @@ function setupEventListeners() {
       return;
     }
     showInputDialog('Create New File', 'Untitled', 'Enter filename', async (val) => {
-      if (!val) return;
+      if (!val) return false;
       let formattedName = val;
       if (!formattedName.endsWith('.md') && !formattedName.endsWith('.markdown') && !formattedName.endsWith('.txt')) {
         formattedName += '.md';
@@ -481,8 +481,10 @@ function setupEventListeners() {
       if (result.success) {
         if (currentSidebarDir) await loadSidebarDirectory(currentSidebarDir);
         loadFile(result.filePath, '', result.fileName);
+        return true;
       } else {
         alert(`Error creating file: ${result.error}`);
+        return false;
       }
     });
   });
@@ -496,12 +498,14 @@ function setupEventListeners() {
       return;
     }
     showInputDialog('Create New Folder', 'New Folder', 'Enter folder name', async (val) => {
-      if (!val) return;
+      if (!val) return false;
       const result = await window.electronAPI.createDir(parentDir, val);
       if (result.success) {
         if (currentSidebarDir) await loadSidebarDirectory(currentSidebarDir);
+        return true;
       } else {
         alert(`Error creating folder: ${result.error}`);
+        return false;
       }
     });
   });
@@ -513,7 +517,8 @@ function setupEventListeners() {
     if (!targetPath) return;
     const basename = targetPath.split(/[/\\]/).pop();
     showInputDialog('Rename Item', basename, 'Enter new name', async (val) => {
-      if (!val || val === basename) return;
+      if (!val) return false;
+      if (val === basename) return true;
       const result = await window.electronAPI.renameItem(targetPath, val);
       if (result.success) {
         if (targetPath === currentFilePath) {
@@ -522,8 +527,10 @@ function setupEventListeners() {
           currentFilepathStatus.innerText = result.newPath;
         }
         if (currentSidebarDir) await loadSidebarDirectory(currentSidebarDir);
+        return true;
       } else {
         alert(`Error renaming: ${result.error}`);
+        return false;
       }
     });
   });
@@ -567,29 +574,21 @@ function setupEventListeners() {
 
   // Modal Cancel
   btnModalCancel.addEventListener('click', () => {
-    inputModal.style.display = 'none';
+    closeInputDialog();
   });
 
   // Modal Confirm
-  btnModalConfirm.addEventListener('click', () => {
-    if (currentModalCallback) {
-      currentModalCallback(modalInputFilename.value.trim());
-    }
-    inputModal.style.display = 'none';
-  });
+  btnModalConfirm.addEventListener('click', submitInputDialog);
 
   // Modal Input enter/escape keys
   modalInputFilename.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (currentModalCallback) {
-        currentModalCallback(modalInputFilename.value.trim());
-      }
-      inputModal.style.display = 'none';
+      submitInputDialog();
     }
     if (e.key === 'Escape') {
       e.preventDefault();
-      inputModal.style.display = 'none';
+      closeInputDialog();
     }
   });
 
@@ -944,10 +943,79 @@ function hideFindBar() {
 // ============================================================
 // Editor focus and cross-mode undo/redo
 // ============================================================
-function focusActiveEditor(offset = null) {
+function getNodePath(root, node) {
+  if (!root || !node || !root.contains(node)) return null;
+
+  const path = [];
+  let current = node;
+  while (current && current !== root) {
+    const parent = current.parentNode;
+    if (!parent) return null;
+    path.unshift(Array.prototype.indexOf.call(parent.childNodes, current));
+    current = parent;
+  }
+  return path;
+}
+
+function getNodeFromPath(root, path) {
+  if (!root || !Array.isArray(path)) return null;
+
+  let current = root;
+  for (const index of path) {
+    if (!current || !current.childNodes || index < 0 || index >= current.childNodes.length) {
+      return null;
+    }
+    current = current.childNodes[index];
+  }
+  return current;
+}
+
+function clampNodeOffset(node, offset) {
+  if (!node) return 0;
+  const maxOffset = node.nodeType === Node.TEXT_NODE
+    ? node.textContent.length
+    : node.childNodes.length;
+  return Math.max(0, Math.min(offset, maxOffset));
+}
+
+function captureLiveSelectionState() {
+  const selection = window.getSelection();
+  if (!selection.rangeCount || !previewContent.contains(selection.anchorNode)) return null;
+
+  return {
+    anchorPath: getNodePath(previewContent, selection.anchorNode),
+    anchorOffset: selection.anchorOffset,
+    focusPath: getNodePath(previewContent, selection.focusNode),
+    focusOffset: selection.focusOffset
+  };
+}
+
+function restoreLiveSelectionState(selectionState) {
+  if (!selectionState) return false;
+
+  const anchorNode = getNodeFromPath(previewContent, selectionState.anchorPath);
+  const focusNode = getNodeFromPath(previewContent, selectionState.focusPath);
+  if (!anchorNode || !focusNode) return false;
+
+  const range = document.createRange();
+  try {
+    range.setStart(anchorNode, clampNodeOffset(anchorNode, selectionState.anchorOffset));
+    range.setEnd(focusNode, clampNodeOffset(focusNode, selectionState.focusOffset));
+  } catch {
+    return false;
+  }
+
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return true;
+}
+
+function focusActiveEditor(offset = null, liveSelection = null) {
   const restoreFocus = () => {
     if (currentViewMode === 'live') {
       previewContent.focus({ preventScroll: true });
+      if (restoreLiveSelectionState(liveSelection)) return;
       const currentOffset = getCaretCharOffset(previewContent);
       setCaretCharOffset(previewContent, offset ?? (currentOffset >= 0 ? currentOffset : 0));
     } else if (currentViewMode !== 'preview') {
@@ -980,7 +1048,8 @@ function captureEditorState() {
   return {
     content: markdownTextarea.value,
     selectionStart: liveOffset >= 0 ? liveOffset : markdownTextarea.selectionStart,
-    selectionEnd: liveOffset >= 0 ? liveOffset : markdownTextarea.selectionEnd
+    selectionEnd: liveOffset >= 0 ? liveOffset : markdownTextarea.selectionEnd,
+    liveSelection: currentViewMode === 'live' ? captureLiveSelectionState() : null
   };
 }
 
@@ -1019,7 +1088,7 @@ function restoreEditorState(state) {
   }
 
   const offset = Math.max(0, Math.min(state.selectionStart, state.content.length));
-  focusActiveEditor(offset);
+  focusActiveEditor(offset, state.liveSelection);
   isRestoringHistory = false;
 }
 
@@ -2248,7 +2317,7 @@ if (btnNewFileSidebar) {
   btnNewFileSidebar.addEventListener('click', () => {
     if (currentSidebarDir) {
       showInputDialog('Create New File', 'Untitled', 'Enter filename', async (val) => {
-        if (!val) return;
+        if (!val) return false;
         let formattedName = val;
         if (!formattedName.endsWith('.md') && !formattedName.endsWith('.markdown') && !formattedName.endsWith('.txt')) {
           formattedName += '.md';
@@ -2257,8 +2326,10 @@ if (btnNewFileSidebar) {
         if (result.success) {
           await loadSidebarDirectory(currentSidebarDir);
           loadFile(result.filePath, '', result.fileName);
+          return true;
         } else {
           alert(`Error creating file: ${result.error}`);
+          return false;
         }
       });
     } else {
@@ -2521,35 +2592,58 @@ function initTurndown() {
       return string;
     };
 
-    // Custom table conversion rule
+    // Convert each HTML table once. Handling tr/td independently causes body
+    // rows to be mistaken for headers and repeatedly reintroduces | --- | rows.
     turndownService.addRule('tables', {
-      filter: ['table', 'thead', 'tbody', 'tr', 'th', 'td'],
-      replacement: function (content, node) {
-        if (node.nodeName === 'TD' || node.nodeName === 'TH') {
-          return ' ' + content.trim() + ' |';
-        }
-        if (node.nodeName === 'TR') {
-          const isHeader = node.parentNode.nodeName === 'THEAD' ||
-            (node.parentNode.nodeName === 'TBODY' && !node.previousElementSibling);
-          let row = '|' + content + '\n';
-          if (isHeader) {
-            const colCount = node.querySelectorAll('td, th').length;
-            let divider = '|';
-            for (let i = 0; i < colCount; i++) {
-              divider += ' --- |';
-            }
-            row += divider + '\n';
-          }
-          return row;
-        }
-        if (node.nodeName === 'TABLE') {
-          return '\n\n' + content + '\n\n';
-        }
-        return content;
+      filter: 'table',
+      replacement: function (_content, node) {
+        return tableElementToMarkdown(node);
       }
     });
 
   }
+}
+
+function normalizeTableCellMarkdown(cell) {
+  const markdown = turndownService.turndown(cell.innerHTML || cell.textContent || '');
+  return markdown
+    .replace(/\r?\n+/g, '<br>')
+    .replace(/\|/g, '\\|')
+    .trim();
+}
+
+function isMarkdownDividerCell(text) {
+  return /^:?-{3,}:?$/.test((text || '').trim());
+}
+
+function tableElementToMarkdown(table) {
+  const rows = Array.from(table.querySelectorAll('tr'))
+    .map((row) => {
+      const cells = Array.from(row.children).filter((cell) => cell.matches('th, td'));
+      return {
+        isHeader: row.closest('thead') !== null || cells.some((cell) => cell.tagName === 'TH'),
+        cells: cells.map(normalizeTableCellMarkdown)
+      };
+    })
+    .filter((row) => row.cells.length > 0)
+    .filter((row) => !row.cells.every(isMarkdownDividerCell));
+
+  if (rows.length === 0) return '';
+
+  const columnCount = Math.max(...rows.map((row) => row.cells.length));
+  const normalizeRow = (row) => {
+    const cells = row.cells.slice();
+    while (cells.length < columnCount) cells.push('');
+    return `| ${cells.map((cell) => cell || ' ').join(' | ')} |`;
+  };
+
+  const explicitHeaderIndex = rows.findIndex((row) => row.isHeader);
+  const headerIndex = explicitHeaderIndex >= 0 ? explicitHeaderIndex : 0;
+  const header = rows[headerIndex];
+  const bodyRows = rows.filter((_, index) => index !== headerIndex);
+  const divider = `| ${Array.from({ length: columnCount }, () => '---').join(' | ')} |`;
+
+  return `\n\n${[normalizeRow(header), divider, ...bodyRows.map(normalizeRow)].join('\n')}\n\n`;
 }
 
 // --- Cursor preservation utilities for contentEditable re-render ---
@@ -2828,12 +2922,67 @@ function handleLiveEditBlur() {
 
 // --- Custom Input Modal Dialog Helper ---
 let currentModalCallback = null;
+let isInputModalSubmitting = false;
+
+function closeInputDialog() {
+  inputModal.style.display = 'none';
+  currentModalCallback = null;
+  isInputModalSubmitting = false;
+  btnModalConfirm.disabled = false;
+  btnModalCancel.disabled = false;
+}
+
+async function submitInputDialog() {
+  if (isInputModalSubmitting) return;
+
+  const value = modalInputFilename.value.trim();
+  if (!value) {
+    modalInputFilename.focus();
+    return;
+  }
+
+  if (!currentModalCallback) {
+    closeInputDialog();
+    return;
+  }
+
+  isInputModalSubmitting = true;
+  btnModalConfirm.disabled = true;
+  btnModalCancel.disabled = true;
+
+  try {
+    const shouldClose = await currentModalCallback(value);
+    if (shouldClose === false) {
+      isInputModalSubmitting = false;
+      btnModalConfirm.disabled = false;
+      btnModalCancel.disabled = false;
+      requestAnimationFrame(() => {
+        modalInputFilename.focus();
+        modalInputFilename.select();
+      });
+      return;
+    }
+    closeInputDialog();
+  } catch (error) {
+    alert(`Operation failed: ${error.message}`);
+    isInputModalSubmitting = false;
+    btnModalConfirm.disabled = false;
+    btnModalCancel.disabled = false;
+    requestAnimationFrame(() => {
+      modalInputFilename.focus();
+      modalInputFilename.select();
+    });
+  }
+}
 
 function showInputDialog(title, defaultValue, placeholder, confirmCallback) {
   document.querySelector('#input-modal h3').innerText = title;
   modalInputFilename.value = defaultValue;
   modalInputFilename.placeholder = placeholder;
   currentModalCallback = confirmCallback;
+  isInputModalSubmitting = false;
+  btnModalConfirm.disabled = false;
+  btnModalCancel.disabled = false;
 
   inputModal.style.display = 'flex';
   requestAnimationFrame(() => {
