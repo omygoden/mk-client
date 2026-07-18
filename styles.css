@@ -1028,12 +1028,14 @@ body {
 }
 
 #preview-container.live-view .live-heading-nav:not(.empty) {
-  position: absolute;
+  position: sticky;
   top: 16px;
   left: 56px;
   z-index: 11;
   width: 220px;
-  max-height: calc(100% - 32px);
+  max-height: calc(100vh - 180px);
+  height: fit-content;
+  align-self: flex-start;
   display: flex;
   flex-direction: column;
   gap: 2px;
