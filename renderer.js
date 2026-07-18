@@ -266,8 +266,12 @@ function setupEventListeners() {
   previewContainer.addEventListener('scroll', () => {
     updateLiveScrollControls();
     updateActiveLiveHeading();
+    updateLiveHeadingNavPosition();
   }, { passive: true });
-  window.addEventListener('resize', updateLiveScrollControls);
+  window.addEventListener('resize', () => {
+    updateLiveScrollControls();
+    updateLiveHeadingNavPosition();
+  });
   previewContainer.addEventListener('mousedown', handleEmptyLiveAreaMouseDown);
 
   // Debounced render for input performance
@@ -2211,6 +2215,7 @@ function renderLiveHeadingNav(headers) {
 
   if (headers.length === 0) {
     liveHeadingNav.classList.add('empty');
+    liveHeadingNav.style.transform = '';
     return;
   }
 
@@ -2226,6 +2231,12 @@ function renderLiveHeadingNav(headers) {
     button.addEventListener('click', () => scrollToLiveHeading(header.lineIndex));
     liveHeadingNav.appendChild(button);
   });
+  updateLiveHeadingNavPosition();
+}
+
+function updateLiveHeadingNavPosition() {
+  if (!liveHeadingNav || currentViewMode !== 'live' || liveHeadingNav.classList.contains('empty')) return;
+  liveHeadingNav.style.transform = `translateY(${previewContainer.scrollTop}px)`;
 }
 
 function scrollToLine(lineIndex) {
@@ -3128,7 +3139,10 @@ function renderLiveEditMode() {
 
   requestAnimationFrame(updateLiveScrollControls);
   renderLiveHeadingNav(getMarkdownHeaders());
-  requestAnimationFrame(updateActiveLiveHeading);
+  requestAnimationFrame(() => {
+    updateLiveHeadingNavPosition();
+    updateActiveLiveHeading();
+  });
 }
 
 // Re-render ONLY the single block that was just left — all other blocks
