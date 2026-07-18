@@ -175,6 +175,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 4. Setup Event Listeners
   setupEventListeners();
+  setupExternalFileOpenListener();
   setViewMode('live');
 
   // Defer Lucide icon rendering and initial markdown parse to allow layout to paint instantly
@@ -767,6 +768,20 @@ function setupEventListeners() {
       }
     });
   }
+}
+
+function setupExternalFileOpenListener() {
+  if (!window.electronAPI || typeof window.electronAPI.onOpenFile !== 'function') return;
+
+  window.electronAPI.onOpenFile(async (fileData) => {
+    if (!fileData || !fileData.filePath || typeof fileData.content !== 'string') return;
+
+    const previousOffset = getActiveEditorOffset();
+    if (!await confirmFileTransition(previousOffset)) return;
+
+    loadFile(fileData.filePath, fileData.content, fileData.fileName || fileData.filePath.split(/[/\\]/).pop());
+    addRecentItem('file', fileData.filePath);
+  });
 }
 
 let splitScrollSyncFrame = null;

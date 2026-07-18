@@ -18,6 +18,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   exportPdf: (htmlContent, defaultPath) => ipcRenderer.invoke('export:pdf', htmlContent, defaultPath),
   exportHtml: (htmlContent, defaultPath) => ipcRenderer.invoke('export:html', htmlContent, defaultPath),
   setZoomFactor: (factor) => webFrame.setZoomFactor(factor),
+  onOpenFile: (callback) => {
+    const listener = (_event, fileData) => callback(fileData);
+    ipcRenderer.on('file:openExternal', listener);
+    return () => ipcRenderer.removeListener('file:openExternal', listener);
+  },
   
   // Custom Window Controls
   minimize: () => ipcRenderer.send('window:minimize'),

@@ -1028,14 +1028,12 @@ body {
 }
 
 #preview-container.live-view .live-heading-nav:not(.empty) {
-  position: sticky;
+  position: absolute;
   top: 16px;
-  left: 58px;
+  left: 56px;
   z-index: 11;
-  width: min(220px, 24vw);
-  max-height: min(42vh, 360px);
-  height: fit-content;
-  align-self: flex-start;
+  width: 220px;
+  max-height: calc(100% - 32px);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1046,7 +1044,6 @@ body {
   background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
   box-shadow: 0 4px 12px var(--shadow-color);
   backdrop-filter: blur(8px);
-  margin-bottom: max(-360px, -42vh);
 }
 
 .live-heading-nav-item {
@@ -1092,6 +1089,26 @@ body {
 
 #preview-container.live-view {
   cursor: text;
+}
+
+#preview-container.live-view .markdown-body {
+  padding-left: 320px;
+}
+
+@media (max-width: 1320px) {
+  #preview-container.live-view .live-heading-nav:not(.empty) {
+    width: 180px;
+  }
+
+  #preview-container.live-view .markdown-body {
+    padding-left: 270px;
+  }
+}
+
+@media (max-width: 980px) {
+  #preview-container.live-view .markdown-body {
+    padding-left: 20px;
+  }
 }
 
 .live-scroll-controls button {

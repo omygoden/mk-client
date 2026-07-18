@@ -2,6 +2,8 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
+const OPENABLE_EXTENSIONS = new Set(['.md', '.markdown', '.txt']);
+
 // Keep Electron's default hardware acceleration enabled. Disabling the GPU
 // forces Chromium to paint and composite scrolling on the CPU, which makes
 // high-refresh-rate displays feel substantially less smooth.
@@ -23,6 +25,51 @@ app.commandLine.appendSwitch('v8-cache-options', 'code');  // Enable V8 code cac
 app.commandLine.appendSwitch('js-flags', '--optimize-for-size --max-old-space-size=128');
 
 let mainWindow;
+let pendingOpenFilePath = getOpenableFilePathFromArgs(process.argv);
+
+function getOpenableFilePathFromArgs(args) {
+  return args.find((arg) => getOpenableFilePath(arg)) || null;
+}
+
+function getOpenableFilePath(filePath) {
+  if (!filePath || typeof filePath !== 'string') return null;
+  const ext = path.extname(filePath).toLowerCase();
+  if (!OPENABLE_EXTENSIONS.has(ext)) return null;
+  try {
+    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return null;
+    return filePath;
+  } catch {
+    return null;
+  }
+}
+
+function readOpenableFile(filePath) {
+  const safePath = getOpenableFilePath(filePath);
+  if (!safePath) return null;
+  return {
+    filePath: safePath,
+    content: fs.readFileSync(safePath, 'utf-8'),
+    fileName: path.basename(safePath)
+  };
+}
+
+function sendOpenFileToRenderer(filePath) {
+  const fileData = readOpenableFile(filePath);
+  if (!fileData || !mainWindow) return false;
+
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.webContents.send('file:openExternal', fileData);
+  return true;
+}
+
+function flushPendingOpenFile() {
+  if (!pendingOpenFilePath) return;
+  const filePath = pendingOpenFilePath;
+  pendingOpenFilePath = null;
+  sendOpenFileToRenderer(filePath);
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -51,6 +98,7 @@ function createWindow() {
 
   // Load the main HTML file
   mainWindow.loadFile('index.html');
+  mainWindow.webContents.once('did-finish-load', flushPendingOpenFile);
 
   // Toggle DevTools with Ctrl+Shift+I, Cmd+Alt+I, or F12
   mainWindow.webContents.on('before-input-event', (event, input) => {
@@ -70,19 +118,51 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(() => {
-  createWindow();
+app.on('open-file', (event, filePath) => {
+  event.preventDefault();
+  const openableFilePath = getOpenableFilePath(filePath);
+  if (!openableFilePath) return;
 
-  // Defer non-critical IPC handler registration to after window creation
-  // This lets the window appear ~50-100ms faster
-  setImmediate(() => {
-    registerDeferredIPCHandlers();
-  });
-
-  app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
+  if (mainWindow && !mainWindow.webContents.isLoading()) {
+    sendOpenFileToRenderer(openableFilePath);
+  } else {
+    pendingOpenFilePath = openableFilePath;
+  }
 });
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', (_event, commandLine) => {
+    const filePath = getOpenableFilePathFromArgs(commandLine);
+    if (filePath && mainWindow && !mainWindow.webContents.isLoading()) {
+      sendOpenFileToRenderer(filePath);
+    } else if (filePath) {
+      pendingOpenFilePath = filePath;
+    } else if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+}
+
+if (gotSingleInstanceLock) {
+  app.whenReady().then(() => {
+    createWindow();
+
+    // Defer non-critical IPC handler registration to after window creation
+    // This lets the window appear ~50-100ms faster
+    setImmediate(() => {
+      registerDeferredIPCHandlers();
+    });
+
+    app.on('activate', function () {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  });
+}
 
 app.on('window-all-closed', function () {
   if (process.platform !== 'darwin') app.quit();

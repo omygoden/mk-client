@@ -43,6 +43,18 @@
       "target": "dmg",
       "icon": "assets/icon.icns"
     },
+    "fileAssociations": [
+      {
+        "ext": [
+          "md",
+          "markdown",
+          "txt"
+        ],
+        "name": "Markdown Document",
+        "description": "Markdown text document",
+        "role": "Editor"
+      }
+    ],
     "files": [
       "main.js",
       "preload.js",
