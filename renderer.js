@@ -37,6 +37,7 @@ let findLiveRanges = [];
 let findStartOffset = 0;
 let savedTextareaSelection = null;
 let savedLiveSelection = null;
+let tableContextCell = null;
 
 // Cross-mode edit history. Native textarea history does not include changes
 // made through toolbar/context-menu actions, so keep one document-level stack.
@@ -656,6 +657,7 @@ function setupEventListeners() {
   function showEditorContextMenu(e) {
     e.preventDefault();
     let currentHeadingLevel = 0;
+    let currentTableCell = null;
     if (e.currentTarget === markdownTextarea) {
       savedTextareaSelection = {
         start: markdownTextarea.selectionStart,
@@ -664,6 +666,12 @@ function setupEventListeners() {
       currentHeadingLevel = getTextareaHeadingLevel(savedTextareaSelection.start);
       savedLiveSelection = null;
     } else {
+      currentTableCell = currentViewMode === 'live'
+        ? e.target.closest('td, th')
+        : null;
+      if (currentTableCell && !previewContent.contains(currentTableCell)) {
+        currentTableCell = null;
+      }
       const selection = window.getSelection();
       savedLiveSelection = selection.rangeCount && previewContent.contains(selection.anchorNode)
         ? selection.getRangeAt(0).cloneRange()
@@ -672,6 +680,7 @@ function setupEventListeners() {
       savedTextareaSelection = null;
     }
     updateContextHeadingState(currentHeadingLevel);
+    updateTableContextMenuState(currentTableCell);
     contextMenu.style.display = 'none';
     editorContextMenu.style.display = 'block';
     const menuW = 220, menuH = Math.min(editorContextMenu.scrollHeight, window.innerHeight * 0.8);
@@ -689,6 +698,7 @@ function setupEventListeners() {
   document.addEventListener('click', (e) => {
     if (!editorContextMenu.contains(e.target)) {
       editorContextMenu.style.display = 'none';
+      tableContextCell = null;
     }
   }, true);
 
@@ -714,6 +724,12 @@ function setupEventListeners() {
     ['ectx-ul',            () => insertLinePrefixUniversal('- ')],
     ['ectx-ol',            () => insertLinePrefixUniversal('1. ')],
     ['ectx-hr',            () => insertFormattingUniversal('\n\n---\n\n', '')],
+    ['ectx-table-row-above', () => editTableAtContext('insert-row-above')],
+    ['ectx-table-row-below', () => editTableAtContext('insert-row-below')],
+    ['ectx-table-col-left',  () => editTableAtContext('insert-col-left')],
+    ['ectx-table-col-right', () => editTableAtContext('insert-col-right')],
+    ['ectx-table-delete-row', () => editTableAtContext('delete-row')],
+    ['ectx-table-delete-col', () => editTableAtContext('delete-col')],
     ['ectx-find',          () => showFindBar()],
   ];
   ecmActions.forEach(([id, fn]) => {
@@ -1132,6 +1148,161 @@ function updateContextHeadingState(level) {
     if (isCurrent) button.setAttribute('aria-current', 'true');
     else button.removeAttribute('aria-current');
   }
+}
+
+function getTableRows(table) {
+  return Array.from(table.querySelectorAll('tr'));
+}
+
+function getTableCells(row) {
+  return Array.from(row?.children || []).filter((cell) => cell.matches('th, td'));
+}
+
+function getTableColumnCount(table) {
+  return Math.max(0, ...getTableRows(table).map((row) => getTableCells(row).length));
+}
+
+function getTableCellColumnIndex(cell) {
+  return getTableCells(cell?.closest('tr')).indexOf(cell);
+}
+
+function updateTableContextMenuState(cell) {
+  tableContextCell = cell || null;
+  const hasTableContext = Boolean(tableContextCell);
+  editorContextMenu.classList.toggle('has-table-context', hasTableContext);
+
+  const deleteRowButton = document.getElementById('ectx-table-delete-row');
+  const deleteColButton = document.getElementById('ectx-table-delete-col');
+  if (!deleteRowButton || !deleteColButton) return;
+
+  const table = tableContextCell?.closest('table');
+  deleteRowButton.disabled = !table || getTableRows(table).length <= 1;
+  deleteColButton.disabled = !table || getTableColumnCount(table) <= 1;
+}
+
+function createEmptyTableCell(referenceCell) {
+  const cell = document.createElement(referenceCell?.tagName === 'TH' ? 'th' : 'td');
+  cell.appendChild(document.createElement('br'));
+  return cell;
+}
+
+function placeCaretInTableCell(cell) {
+  if (!cell || !previewContent.contains(cell)) return;
+  previewContent.focus({ preventScroll: true });
+  const range = document.createRange();
+  range.selectNodeContents(cell);
+  range.collapse(false);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function commitTableContextEdit(focusCell) {
+  initTurndown();
+  syncLiveContentToTextarea();
+  isModified = true;
+  unsavedIndicator.style.display = 'inline-block';
+  updateStats();
+  generateOutline();
+  tableContextCell = focusCell || null;
+  requestAnimationFrame(updateLiveScrollControls);
+  requestAnimationFrame(() => placeCaretInTableCell(focusCell));
+}
+
+function insertTableRowAtContext(position) {
+  const currentCell = tableContextCell;
+  const currentRow = currentCell?.closest('tr');
+  if (!currentCell || !currentRow) return;
+
+  recordEditorState();
+  const newRow = document.createElement('tr');
+  getTableCells(currentRow).forEach((cell) => {
+    newRow.appendChild(createEmptyTableCell(cell));
+  });
+
+  if (position === 'above') {
+    currentRow.parentNode.insertBefore(newRow, currentRow);
+  } else {
+    currentRow.parentNode.insertBefore(newRow, currentRow.nextSibling);
+  }
+
+  const columnIndex = Math.max(0, getTableCellColumnIndex(currentCell));
+  commitTableContextEdit(getTableCells(newRow)[columnIndex] || newRow.firstElementChild);
+}
+
+function insertTableColumnAtContext(position) {
+  const currentCell = tableContextCell;
+  const table = currentCell?.closest('table');
+  const currentColumnIndex = getTableCellColumnIndex(currentCell);
+  if (!currentCell || !table || currentColumnIndex < 0) return;
+
+  recordEditorState();
+  let focusCell = null;
+  getTableRows(table).forEach((row) => {
+    const cells = getTableCells(row);
+    const referenceIndex = Math.min(currentColumnIndex, Math.max(0, cells.length - 1));
+    const referenceCell = cells[referenceIndex] || currentCell;
+    const newCell = createEmptyTableCell(referenceCell);
+    const insertBeforeIndex = position === 'left' ? currentColumnIndex : currentColumnIndex + 1;
+    row.insertBefore(newCell, cells[insertBeforeIndex] || null);
+    if (row === currentCell.closest('tr')) {
+      focusCell = newCell;
+    }
+  });
+
+  commitTableContextEdit(focusCell);
+}
+
+function deleteTableRowAtContext() {
+  const currentCell = tableContextCell;
+  const currentRow = currentCell?.closest('tr');
+  const table = currentCell?.closest('table');
+  if (!currentCell || !currentRow || !table || getTableRows(table).length <= 1) return;
+
+  recordEditorState();
+  const rows = getTableRows(table);
+  const rowIndex = rows.indexOf(currentRow);
+  const columnIndex = Math.max(0, getTableCellColumnIndex(currentCell));
+  const nextFocusRow = rows[rowIndex + 1] || rows[rowIndex - 1] || null;
+  currentRow.remove();
+  const focusCell = nextFocusRow
+    ? getTableCells(nextFocusRow)[Math.min(columnIndex, getTableCells(nextFocusRow).length - 1)]
+    : null;
+  commitTableContextEdit(focusCell);
+}
+
+function deleteTableColumnAtContext() {
+  const currentCell = tableContextCell;
+  const table = currentCell?.closest('table');
+  const columnIndex = getTableCellColumnIndex(currentCell);
+  if (!currentCell || !table || columnIndex < 0 || getTableColumnCount(table) <= 1) return;
+
+  recordEditorState();
+  let focusCell = null;
+  const currentRow = currentCell.closest('tr');
+  getTableRows(table).forEach((row) => {
+    const cells = getTableCells(row);
+    const cellToRemove = cells[columnIndex];
+    if (!cellToRemove) return;
+    const fallbackCell = cells[columnIndex + 1] || cells[columnIndex - 1] || null;
+    if (row === currentRow) {
+      focusCell = fallbackCell;
+    }
+    cellToRemove.remove();
+  });
+
+  commitTableContextEdit(focusCell);
+}
+
+function editTableAtContext(action) {
+  if (currentViewMode !== 'live' || !tableContextCell || !previewContent.contains(tableContextCell)) return;
+
+  if (action === 'insert-row-above') insertTableRowAtContext('above');
+  else if (action === 'insert-row-below') insertTableRowAtContext('below');
+  else if (action === 'insert-col-left') insertTableColumnAtContext('left');
+  else if (action === 'insert-col-right') insertTableColumnAtContext('right');
+  else if (action === 'delete-row') deleteTableRowAtContext();
+  else if (action === 'delete-col') deleteTableColumnAtContext();
 }
 
 /**

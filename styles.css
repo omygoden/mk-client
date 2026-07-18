@@ -1731,6 +1731,28 @@ body {
   color: var(--text-main);
 }
 
+.editor-context-menu .table-context-only {
+  display: none;
+}
+
+.editor-context-menu.has-table-context .table-context-only {
+  display: flex;
+}
+
+.editor-context-menu.has-table-context .ctx-menu-section-label.table-context-only,
+.editor-context-menu.has-table-context .ctx-menu-divider.table-context-only {
+  display: block;
+}
+
+.editor-context-menu button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.editor-context-menu button:disabled:hover {
+  background-color: transparent;
+}
+
 .editor-context-menu button.current-heading {
   background-color: var(--bg-active);
   color: var(--accent-color);
