@@ -1126,9 +1126,16 @@ function restoreEditorScrollTop(scrollTop) {
   return false;
 }
 
+function isModalOpen() {
+  return (inputModal && inputModal.style.display !== 'none') ||
+    (unsavedModal && unsavedModal.style.display !== 'none');
+}
+
 function focusActiveEditor(offset = null, liveSelection = null, options = {}) {
   const { scrollToCaret = false, scrollTop = null } = options;
   const restoreFocus = () => {
+    if (isModalOpen()) return;
+
     if (currentViewMode === 'live') {
       previewContent.focus({ preventScroll: true });
       const restoredSelection = restoreLiveSelectionState(liveSelection);
