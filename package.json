@@ -4,6 +4,7 @@
   "description": "A premium, cross-platform Markdown Editor inspired by Typora.",
   "main": "main.js",
   "scripts": {
+    "test": "node tests/editor-history.test.js",
     "start": "electron .",
     "package-win": "electron-builder --win",
     "package-mac": "electron-builder --mac",
@@ -58,6 +59,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "editor-history.js",
       "renderer.js",
       "index.html",
       "styles.css",

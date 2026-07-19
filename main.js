@@ -22,7 +22,7 @@ app.commandLine.appendSwitch('disable-spell-checking');
 app.commandLine.appendSwitch('disable-breakpad');
 app.commandLine.appendSwitch('disable-component-update');
 app.commandLine.appendSwitch('v8-cache-options', 'code');  // Enable V8 code caching for faster JS parse
-app.commandLine.appendSwitch('js-flags', '--optimize-for-size --max-old-space-size=128');
+app.commandLine.appendSwitch('js-flags', '--optimize-for-size --max-old-space-size=512');
 
 let mainWindow;
 let pendingOpenFilePath = getOpenableFilePathFromArgs(process.argv);

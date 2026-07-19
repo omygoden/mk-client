@@ -41,9 +41,14 @@ let tableContextCell = null;
 
 // Cross-mode edit history. Native textarea history does not include changes
 // made through toolbar/context-menu actions, so keep one document-level stack.
-const undoStack = [];
-const redoStack = [];
 const MAX_HISTORY_ENTRIES = 200;
+const MAX_HISTORY_CHARS = 8_000_000;
+const MAX_HISTORY_STATE_CHARS = 4_000_000;
+const editorHistory = window.EditorHistory.createEditorHistory({
+  maxEntries: MAX_HISTORY_ENTRIES,
+  maxChars: MAX_HISTORY_CHARS,
+  maxStateChars: MAX_HISTORY_STATE_CHARS
+});
 let isRestoringHistory = false;
 const APP_ZOOM_STORAGE_KEY = 'app-zoom-percent';
 const APP_ZOOM_STEP = 10;
@@ -1175,20 +1180,17 @@ function captureEditorState() {
 function recordEditorState() {
   if (isRestoringHistory) return;
   const state = captureEditorState();
-  const previous = undoStack[undoStack.length - 1];
+  const previous = editorHistory.peekUndo();
   if (previous && previous.content === state.content &&
       previous.selectionStart === state.selectionStart &&
       previous.selectionEnd === state.selectionEnd) {
     return;
   }
-  undoStack.push(state);
-  if (undoStack.length > MAX_HISTORY_ENTRIES) undoStack.shift();
-  redoStack.length = 0;
+  editorHistory.pushUndo(state);
 }
 
 function resetEditorHistory() {
-  undoStack.length = 0;
-  redoStack.length = 0;
+  editorHistory.reset();
 }
 
 function restoreEditorState(state) {
@@ -1213,15 +1215,15 @@ function restoreEditorState(state) {
 }
 
 function undoEditorChange() {
-  if (undoStack.length === 0) return;
-  redoStack.push(captureEditorState());
-  restoreEditorState(undoStack.pop());
+  if (editorHistory.undoLength === 0) return;
+  editorHistory.pushRedo(captureEditorState());
+  restoreEditorState(editorHistory.popUndo());
 }
 
 function redoEditorChange() {
-  if (redoStack.length === 0) return;
-  undoStack.push(captureEditorState());
-  restoreEditorState(redoStack.pop());
+  if (editorHistory.redoLength === 0) return;
+  editorHistory.pushUndo(captureEditorState(), { preserveRedo: true });
+  restoreEditorState(editorHistory.popRedo());
 }
 
 function getTextareaHeadingLevel(position) {
