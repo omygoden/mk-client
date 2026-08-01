@@ -60,6 +60,7 @@
       "main.js",
       "preload.js",
       "editor-history.js",
+      "file-path-utils.js",
       "renderer.js",
       "index.html",
       "styles.css",

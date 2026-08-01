@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { getSafeChildPath } = require('./file-path-utils');
 
 const OPENABLE_EXTENSIONS = new Set(['.md', '.markdown', '.txt']);
 
@@ -259,7 +260,10 @@ ipcMain.handle('file:create-in-dir', async (event, parentDir, fileName) => {
     if (!fs.existsSync(parentDir) || !fs.statSync(parentDir).isDirectory()) {
       return { success: false, error: 'Target folder no longer exists' };
     }
-    const fullPath = path.join(parentDir, fileName);
+    const fullPath = getSafeChildPath(parentDir, fileName);
+    if (!fullPath) {
+      return { success: false, error: 'File name must not contain path separators' };
+    }
     if (fs.existsSync(fullPath)) {
       return { success: false, error: 'File already exists' };
     }
@@ -276,11 +280,14 @@ ipcMain.handle('dir:create', async (event, parentDir, folderName) => {
     if (!fs.existsSync(parentDir) || !fs.statSync(parentDir).isDirectory()) {
       return { success: false, error: 'Target folder no longer exists' };
     }
-    const fullPath = path.join(parentDir, folderName);
+    const fullPath = getSafeChildPath(parentDir, folderName);
+    if (!fullPath) {
+      return { success: false, error: 'Folder name must not contain path separators' };
+    }
     if (fs.existsSync(fullPath)) {
       return { success: false, error: 'Folder already exists' };
     }
-    fs.mkdirSync(fullPath, { recursive: true });
+    fs.mkdirSync(fullPath);
     return { success: true, dirPath: fullPath };
   } catch (error) {
     return { success: false, error: error.message };
@@ -305,7 +312,10 @@ ipcMain.handle('file:delete', async (event, itemPath) => {
 ipcMain.handle('file:rename', async (event, oldPath, newName) => {
   try {
     const parentDir = path.dirname(oldPath);
-    const newPath = path.join(parentDir, newName);
+    const newPath = getSafeChildPath(parentDir, newName);
+    if (!newPath) {
+      return { success: false, error: 'New name must not contain path separators' };
+    }
     if (fs.existsSync(newPath)) {
       return { success: false, error: 'Target name already exists' };
     }

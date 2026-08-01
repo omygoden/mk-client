@@ -211,3 +211,25 @@ test('keeps the create-file filename input focused after pending editor focus re
   assert.equal(harness.document.activeElement, input);
   assert.notEqual(harness.document.activeElement, preview);
 });
+
+test('keeps a file context menu fully within the bottom-right viewport edge', () => {
+  const harness = createRendererHarness();
+  const menu = harness.elements.get('context-menu');
+  menu.getBoundingClientRect = () => ({ width: 180, height: 240 });
+  harness.context.window.innerWidth = 800;
+  harness.context.window.innerHeight = 600;
+
+  harness.context.positionContextMenu(menu, 780, 580);
+
+  assert.equal(menu.style.left, '612px');
+  assert.equal(menu.style.top, '352px');
+});
+
+test('uses the requested default extension without changing an explicit text or Markdown extension', () => {
+  const harness = createRendererHarness();
+
+  assert.equal(harness.context.getNewFileName('notes', '.txt'), 'notes.txt');
+  assert.equal(harness.context.getNewFileName('notes', '.md'), 'notes.md');
+  assert.equal(harness.context.getNewFileName('notes.txt', '.md'), 'notes.txt');
+  assert.equal(harness.context.getNewFileName('notes.markdown', '.txt'), 'notes.markdown');
+});

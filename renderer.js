@@ -15,7 +15,7 @@ let currentFilename, unsavedIndicator, dirTree, outlineView, currentFilepathStat
 let appSidebar, sidebarExpandHandle, btnToggleSidebar, tabFiles, tabOutline, paneFiles, paneOutline;
 let btnNewFile, btnOpenFile, btnSaveFile, btnModeEdit, btnModeSplit, btnModePreview, btnModeLive, btnExportPdf, btnExportHtml;
 let btnRecent, recentMenu, recentList, btnClearRecent;
-let contextMenu, ctxRefreshSidebar, ctxOpenItem, ctxShowInFolder, ctxCopyPath, ctxCreateFile, ctxCreateFolder, ctxRenameItem, ctxDeleteItem;
+let contextMenu, ctxRefreshSidebar, ctxOpenItem, ctxShowInFolder, ctxCopyPath, ctxCreateTextFile, ctxCreateMarkdownFile, ctxCreateFolder, ctxRenameItem, ctxDeleteItem;
 let selectedPathForContextMenu = null;
 let selectedIsDir = false;
 let selectedFileTreePaths = new Set();
@@ -111,7 +111,8 @@ function initDOMReferences() {
   ctxOpenItem = document.getElementById('ctx-open-item');
   ctxShowInFolder = document.getElementById('ctx-show-in-folder');
   ctxCopyPath = document.getElementById('ctx-copy-path');
-  ctxCreateFile = document.getElementById('ctx-create-file');
+  ctxCreateTextFile = document.getElementById('ctx-create-text-file');
+  ctxCreateMarkdownFile = document.getElementById('ctx-create-markdown-file');
   ctxCreateFolder = document.getElementById('ctx-create-folder');
   ctxRenameItem = document.getElementById('ctx-rename-item');
   ctxDeleteItem = document.getElementById('ctx-delete-item');
@@ -152,6 +153,27 @@ function initDOMReferences() {
   findCloseBtn = document.getElementById('find-close');
   // Editor context menu
   editorContextMenu = document.getElementById('editor-context-menu');
+}
+
+const CONTEXT_MENU_VIEWPORT_PADDING = 8;
+const NEW_FILE_EXTENSIONS = ['.md', '.markdown', '.txt'];
+
+function positionContextMenu(menu, clientX, clientY) {
+  const { width: menuWidth, height: menuHeight } = menu.getBoundingClientRect();
+  const maxX = Math.max(CONTEXT_MENU_VIEWPORT_PADDING, window.innerWidth - menuWidth - CONTEXT_MENU_VIEWPORT_PADDING);
+  const maxY = Math.max(CONTEXT_MENU_VIEWPORT_PADDING, window.innerHeight - menuHeight - CONTEXT_MENU_VIEWPORT_PADDING);
+  const x = Math.min(Math.max(clientX, CONTEXT_MENU_VIEWPORT_PADDING), maxX);
+  const y = Math.min(Math.max(clientY, CONTEXT_MENU_VIEWPORT_PADDING), maxY);
+
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+}
+
+function getNewFileName(fileName, defaultExtension) {
+  const trimmedName = fileName.trim();
+  const lowerCaseName = trimmedName.toLowerCase();
+  const hasSupportedExtension = NEW_FILE_EXTENSIONS.some(extension => lowerCaseName.endsWith(extension));
+  return hasSupportedExtension ? trimmedName : `${trimmedName}${defaultExtension}`;
 }
 
 // --- Initialization ---
@@ -426,9 +448,8 @@ function setupEventListeners() {
 
     updateFileContextMenuState(Boolean(node));
     contextMenu.style.display = 'block';
-    contextMenu.style.left = `${e.clientX}px`;
-    contextMenu.style.top = `${e.clientY}px`;
     lucide.createIcons();
+    positionContextMenu(contextMenu, e.clientX, e.clientY);
   });
 
   // Hide context menu when clicking elsewhere (using capturing phase to bypass child stopPropagation)
@@ -478,20 +499,17 @@ function setupEventListeners() {
     }
   });
 
-  // Create file from context menu
-  ctxCreateFile.addEventListener('click', () => {
+  // Create text or Markdown files from the context menu.
+  function createContextFile(extension, typeLabel) {
     contextMenu.style.display = 'none';
     const parentDir = getContextCreationDirectory();
     if (!parentDir) {
       alert('Please select a folder before creating a file.');
       return;
     }
-    showInputDialog('Create New File', 'Untitled', 'Enter filename', async (val) => {
+    showInputDialog(`Create New ${typeLabel} File`, `Untitled${extension}`, `Enter filename (${extension})`, async (val) => {
       if (!val) return false;
-      let formattedName = val;
-      if (!formattedName.endsWith('.md') && !formattedName.endsWith('.markdown') && !formattedName.endsWith('.txt')) {
-        formattedName += '.md';
-      }
+      const formattedName = getNewFileName(val, extension);
       const result = await window.electronAPI.createInDir(parentDir, formattedName);
       if (result.success) {
         if (currentSidebarDir) await loadSidebarDirectory(currentSidebarDir);
@@ -502,7 +520,10 @@ function setupEventListeners() {
         return false;
       }
     });
-  });
+  }
+
+  ctxCreateTextFile.addEventListener('click', () => createContextFile('.txt', 'Text'));
+  ctxCreateMarkdownFile.addEventListener('click', () => createContextFile('.md', 'Markdown'));
 
   // Create folder from context menu
   ctxCreateFolder.addEventListener('click', () => {
@@ -697,13 +718,8 @@ function setupEventListeners() {
     updateTableContextMenuState(currentTableCell);
     contextMenu.style.display = 'none';
     editorContextMenu.style.display = 'block';
-    const menuW = 220, menuH = Math.min(editorContextMenu.scrollHeight, window.innerHeight * 0.8);
-    let x = e.clientX, y = e.clientY;
-    if (x + menuW > window.innerWidth)  x = window.innerWidth - menuW - 8;
-    if (y + menuH > window.innerHeight) y = window.innerHeight - menuH - 8;
-    editorContextMenu.style.left = `${x}px`;
-    editorContextMenu.style.top  = `${y}px`;
     lucide.createIcons();
+    positionContextMenu(editorContextMenu, e.clientX, e.clientY);
   }
   markdownTextarea.addEventListener('contextmenu', showEditorContextMenu);
   previewContent.addEventListener('contextmenu', showEditorContextMenu);
@@ -2688,17 +2704,14 @@ function sortFiles(files, sortBy) {
   });
 }
 
-// Sidebar New File shortcut button
+// Sidebar shortcut creates a text file, matching the default context-menu action.
 const btnNewFileSidebar = document.getElementById('btn-new-file-sidebar');
 if (btnNewFileSidebar) {
   btnNewFileSidebar.addEventListener('click', () => {
     if (currentSidebarDir) {
-      showInputDialog('Create New File', 'Untitled', 'Enter filename', async (val) => {
+      showInputDialog('Create New Text File', 'Untitled.txt', 'Enter filename (.txt)', async (val) => {
         if (!val) return false;
-        let formattedName = val;
-        if (!formattedName.endsWith('.md') && !formattedName.endsWith('.markdown') && !formattedName.endsWith('.txt')) {
-          formattedName += '.md';
-        }
+        const formattedName = getNewFileName(val, '.txt');
         const result = await window.electronAPI.createInDir(currentSidebarDir, formattedName);
         if (result.success) {
           await loadSidebarDirectory(currentSidebarDir);
