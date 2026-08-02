@@ -225,6 +225,21 @@ test('keeps a file context menu fully within the bottom-right viewport edge', ()
   assert.equal(menu.style.top, '352px');
 });
 
+test('repositions a context menu after its rendered height changes', () => {
+  const harness = createRendererHarness();
+  const menu = harness.elements.get('context-menu');
+  let renderedHeight = 120;
+  menu.getBoundingClientRect = () => ({ width: 180, height: renderedHeight });
+  harness.context.window.innerWidth = 800;
+  harness.context.window.innerHeight = 600;
+
+  harness.context.showContextMenuAt(menu, 400, 580);
+  renderedHeight = 240;
+  harness.flushAnimationFrames();
+
+  assert.equal(menu.style.top, '352px');
+});
+
 test('uses the requested default extension without changing an explicit text or Markdown extension', () => {
   const harness = createRendererHarness();
 

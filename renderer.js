@@ -169,6 +169,12 @@ function positionContextMenu(menu, clientX, clientY) {
   menu.style.top = `${y}px`;
 }
 
+function showContextMenuAt(menu, clientX, clientY) {
+  menu.style.display = 'block';
+  positionContextMenu(menu, clientX, clientY);
+  requestAnimationFrame(() => positionContextMenu(menu, clientX, clientY));
+}
+
 function getNewFileName(fileName, defaultExtension) {
   const trimmedName = fileName.trim();
   const lowerCaseName = trimmedName.toLowerCase();
@@ -447,9 +453,8 @@ function setupEventListeners() {
     }
 
     updateFileContextMenuState(Boolean(node));
-    contextMenu.style.display = 'block';
     lucide.createIcons();
-    positionContextMenu(contextMenu, e.clientX, e.clientY);
+    showContextMenuAt(contextMenu, e.clientX, e.clientY);
   });
 
   // Hide context menu when clicking elsewhere (using capturing phase to bypass child stopPropagation)
@@ -717,9 +722,8 @@ function setupEventListeners() {
     updateContextHeadingState(currentHeadingLevel);
     updateTableContextMenuState(currentTableCell);
     contextMenu.style.display = 'none';
-    editorContextMenu.style.display = 'block';
     lucide.createIcons();
-    positionContextMenu(editorContextMenu, e.clientX, e.clientY);
+    showContextMenuAt(editorContextMenu, e.clientX, e.clientY);
   }
   markdownTextarea.addEventListener('contextmenu', showEditorContextMenu);
   previewContent.addEventListener('contextmenu', showEditorContextMenu);
