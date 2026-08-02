@@ -233,3 +233,11 @@ test('uses the requested default extension without changing an explicit text or 
   assert.equal(harness.context.getNewFileName('notes.txt', '.md'), 'notes.txt');
   assert.equal(harness.context.getNewFileName('notes.markdown', '.txt'), 'notes.markdown');
 });
+
+test('updates visibility for both file-creation context-menu actions', () => {
+  const harness = createRendererHarness();
+
+  assert.doesNotThrow(() => harness.context.updateFileContextMenuState(false));
+  assert.equal(harness.elements.get('ctx-create-text-file').style.display, 'flex');
+  assert.equal(harness.elements.get('ctx-create-markdown-file').style.display, 'flex');
+});

@@ -2033,7 +2033,8 @@ function updateFileContextMenuState(hasNodeTarget) {
   ctxOpenItem.style.display = isSingle && hasNodeTarget ? 'flex' : 'none';
   ctxShowInFolder.style.display = isSingle && hasNodeTarget ? 'flex' : 'none';
   ctxCopyPath.style.display = selectedCount > 0 ? 'flex' : 'none';
-  ctxCreateFile.style.display = canCreateInTarget ? 'flex' : 'none';
+  ctxCreateTextFile.style.display = canCreateInTarget ? 'flex' : 'none';
+  ctxCreateMarkdownFile.style.display = canCreateInTarget ? 'flex' : 'none';
   ctxCreateFolder.style.display = canCreateInTarget ? 'flex' : 'none';
   ctxRenameItem.style.display = isSingle && hasNodeTarget ? 'flex' : 'none';
   ctxDeleteItem.style.display = selectedCount > 0 && hasNodeTarget ? 'flex' : 'none';
