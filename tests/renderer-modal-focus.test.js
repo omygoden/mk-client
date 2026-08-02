@@ -52,6 +52,10 @@ function createElement(id, documentRef) {
     nodeType: 1,
     firstElementChild: null,
     addEventListener() {},
+    removeEventListener() {},
+    replaceChildren(...nodes) {
+      this.children = nodes;
+    },
     appendChild(child) {
       this.children.push(child);
       return child;
@@ -165,7 +169,7 @@ function createRendererHarness() {
     Node: { TEXT_NODE: 3 },
     NodeFilter: { SHOW_TEXT: 4 },
     lucide: { createIcons() {} },
-    marked: { parse: () => '' },
+    marked: { parse: () => '', setOptions() {} },
     DOMPurify: { sanitize: (html) => html },
     TurndownService: function TurndownService() {
       return { addRule() {}, turndown: () => '' };
@@ -212,7 +216,7 @@ test('keeps the create-file filename input focused after pending editor focus re
   assert.notEqual(harness.document.activeElement, preview);
 });
 
-test('keeps a file context menu fully within the bottom-right viewport edge', () => {
+test('flips a file context menu above the cursor near the bottom-right viewport edge', () => {
   const harness = createRendererHarness();
   const menu = harness.elements.get('context-menu');
   menu.getBoundingClientRect = () => ({ width: 180, height: 240 });
@@ -222,7 +226,20 @@ test('keeps a file context menu fully within the bottom-right viewport edge', ()
   harness.context.positionContextMenu(menu, 780, 580);
 
   assert.equal(menu.style.left, '612px');
-  assert.equal(menu.style.top, '352px');
+  assert.equal(menu.style.top, '340px');
+});
+
+test('caps a context menu taller than the viewport and keeps it scrollable in place', () => {
+  const harness = createRendererHarness();
+  const menu = harness.elements.get('context-menu');
+  menu.getBoundingClientRect = () => ({ width: 180, height: 900 });
+  harness.context.window.innerWidth = 800;
+  harness.context.window.innerHeight = 600;
+
+  harness.context.positionContextMenu(menu, 400, 580);
+
+  assert.equal(menu.style.maxHeight, '584px');
+  assert.equal(menu.style.top, '8px');
 });
 
 test('repositions a context menu after its rendered height changes', () => {
@@ -237,7 +254,58 @@ test('repositions a context menu after its rendered height changes', () => {
   renderedHeight = 240;
   harness.flushAnimationFrames();
 
-  assert.equal(menu.style.top, '352px');
+  assert.equal(menu.style.top, '340px');
+});
+
+test('leaves the hidden textarea untouched when a live-mode formatting shortcut has no rendered caret', () => {
+  const harness = createRendererHarness();
+  const textarea = harness.elements.get('markdown-textarea');
+  textarea.value = 'hello';
+  harness.context.setViewMode('live');
+
+  harness.context.applyFormattingShortcut('**', '**');
+
+  assert.equal(textarea.value, 'hello');
+});
+
+test('applies a formatting shortcut even when caps lock uppercases the key', () => {
+  const harness = createRendererHarness();
+  const textarea = harness.elements.get('markdown-textarea');
+  harness.context.setViewMode('edit');
+  textarea.value = 'hello';
+  textarea.selectionStart = 0;
+  textarea.selectionEnd = 5;
+
+  harness.context.handleGlobalShortcuts({
+    key: 'B',
+    ctrlKey: true,
+    metaKey: false,
+    shiftKey: false,
+    target: textarea,
+    preventDefault() {}
+  });
+
+  assert.equal(textarea.value, '**hello**');
+});
+
+test('ignores formatting shortcuts pressed inside a plain text input', () => {
+  const harness = createRendererHarness();
+  const textarea = harness.elements.get('markdown-textarea');
+  const input = harness.elements.get('modal-input-filename');
+  input.tagName = 'INPUT';
+  harness.context.setViewMode('edit');
+  textarea.value = 'hello';
+
+  harness.context.handleGlobalShortcuts({
+    key: 'b',
+    ctrlKey: true,
+    metaKey: false,
+    shiftKey: false,
+    target: input,
+    preventDefault() {}
+  });
+
+  assert.equal(textarea.value, 'hello');
 });
 
 test('uses the requested default extension without changing an explicit text or Markdown extension', () => {

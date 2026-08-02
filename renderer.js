@@ -159,11 +159,31 @@ const CONTEXT_MENU_VIEWPORT_PADDING = 8;
 const NEW_FILE_EXTENSIONS = ['.md', '.markdown', '.txt'];
 
 function positionContextMenu(menu, clientX, clientY) {
-  const { width: menuWidth, height: menuHeight } = menu.getBoundingClientRect();
-  const maxX = Math.max(CONTEXT_MENU_VIEWPORT_PADDING, window.innerWidth - menuWidth - CONTEXT_MENU_VIEWPORT_PADDING);
-  const maxY = Math.max(CONTEXT_MENU_VIEWPORT_PADDING, window.innerHeight - menuHeight - CONTEXT_MENU_VIEWPORT_PADDING);
-  const x = Math.min(Math.max(clientX, CONTEXT_MENU_VIEWPORT_PADDING), maxX);
-  const y = Math.min(Math.max(clientY, CONTEXT_MENU_VIEWPORT_PADDING), maxY);
+  const padding = CONTEXT_MENU_VIEWPORT_PADDING;
+  const viewportWidth = window.innerWidth;
+  const viewportHeight = window.innerHeight;
+  const availableHeight = Math.max(0, viewportHeight - padding * 2);
+
+  // Drop any limit left over from a previous open so the natural height is measured
+  menu.style.maxHeight = '';
+  const { width: menuWidth, height: naturalHeight } = menu.getBoundingClientRect();
+  if (naturalHeight > availableHeight) {
+    menu.style.maxHeight = `${availableHeight}px`;
+  }
+  const menuHeight = Math.min(naturalHeight, availableHeight);
+
+  // Flip above the cursor when there is not enough room below, then clamp to the viewport
+  const spaceBelow = viewportHeight - clientY - padding;
+  const spaceAbove = clientY - padding;
+  let y = clientY;
+  if (menuHeight > spaceBelow) {
+    y = menuHeight <= spaceAbove ? clientY - menuHeight : padding;
+  }
+  const maxY = Math.max(padding, viewportHeight - menuHeight - padding);
+  y = Math.min(Math.max(y, padding), maxY);
+
+  const maxX = Math.max(padding, viewportWidth - menuWidth - padding);
+  const x = Math.min(Math.max(clientX, padding), maxX);
 
   menu.style.left = `${x}px`;
   menu.style.top = `${y}px`;
@@ -405,14 +425,34 @@ function setupEventListeners() {
   if (btnOpenFolderPlaceholder) btnOpenFolderPlaceholder.addEventListener('click', openFolder);
   if (btnRefreshSidebar) btnRefreshSidebar.addEventListener('click', refreshSidebarDirectory);
 
-  // Formatting Helpers
-  formatBold.addEventListener('click', () => insertFormatting('**', '**'));
-  formatItalic.addEventListener('click', () => insertFormatting('*', '*'));
-  formatHeading.addEventListener('click', () => insertFormatting('\n## ', '\n'));
-  formatCode.addEventListener('click', () => insertFormatting('\n```\n', '\n```\n'));
-  formatLink.addEventListener('click', () => insertFormatting('[', '](url)'));
-  formatImage.addEventListener('click', () => insertFormatting('![alt text](', ' "image title")'));
+  // Formatting Helpers — keep the caret in the rendered editor so live mode can
+  // format the real selection instead of the hidden textarea's stale one.
+  [formatBold, formatItalic, formatHeading, formatCode, formatLink, formatImage, formatTable]
+    .forEach(button => button.addEventListener('mousedown', (e) => e.preventDefault()));
+
+  formatBold.addEventListener('click', () => applyFormattingShortcut('**', '**'));
+  formatItalic.addEventListener('click', () => applyFormattingShortcut('*', '*'));
+  formatCode.addEventListener('click', () => applyFormattingShortcut('\n```\n', '\n```\n'));
+  formatLink.addEventListener('click', () => applyFormattingShortcut('[', '](url)'));
+  formatHeading.addEventListener('click', () => {
+    if (currentViewMode === 'live') {
+      applyLinePrefixShortcut('## ');
+      return;
+    }
+    insertFormatting('\n## ', '\n');
+  });
+  formatImage.addEventListener('click', () => {
+    if (currentViewMode === 'live') {
+      applyFormattingShortcut('![', '](image-url)');
+      return;
+    }
+    insertFormatting('![alt text](', ' "image title")');
+  });
   formatTable.addEventListener('click', () => {
+    if (currentViewMode === 'live') {
+      applyFormattingShortcut('\n| Header 1 | Header 2 |\n| --- | --- |\n| Cell 1 | Cell 2 |\n', '');
+      return;
+    }
     const tableTemplate = '\n| Header 1 | Header 2 |\n| -------- | -------- |\n| Cell 1   | Cell 2   |\n| Cell 3   | Cell 4   |\n';
     insertFormatting(tableTemplate, '');
   });
@@ -696,6 +736,10 @@ function setupEventListeners() {
   // Shared handler for both textarea and live-edit previewContent
   function showEditorContextMenu(e) {
     e.preventDefault();
+    // The rendered pane is only editable in live mode. In split/preview a formatting
+    // action there would run the whole rendered document back through turndown and
+    // overwrite the source, so offer no editor menu at all.
+    if (e.currentTarget === previewContent && currentViewMode !== 'live') return;
     let currentHeadingLevel = 0;
     let currentTableCell = null;
     if (e.currentTarget === markdownTextarea) {
@@ -864,9 +908,38 @@ function scheduleSplitScrollSync(sourceElement, targetElement) {
 }
 
 // --- Keyboard Shortcuts ---
+// Shortcuts share the context-menu formatting path. In live mode the textarea is
+// hidden and its selection is stale, so the current DOM selection must be captured
+// first — otherwise Ctrl+B/I/K silently edits invisible text.
+function captureFormattingSelection() {
+  if (currentViewMode === 'live') {
+    const selection = window.getSelection();
+    if (!selection.rangeCount || !previewContent.contains(selection.anchorNode)) return false;
+    savedLiveSelection = selection.getRangeAt(0).cloneRange();
+    savedTextareaSelection = null;
+    return true;
+  }
+  savedLiveSelection = null;
+  savedTextareaSelection = null;
+  return true;
+}
+
+function applyFormattingShortcut(prefix, suffix) {
+  if (!captureFormattingSelection()) return;
+  insertFormattingUniversal(prefix, suffix);
+}
+
+function applyLinePrefixShortcut(prefix) {
+  if (!captureFormattingSelection()) return;
+  insertLinePrefixUniversal(prefix);
+}
+
 function handleGlobalShortcuts(e) {
   const key = e.key.toLowerCase();
   const isEditorTarget = e.target === markdownTextarea || previewContent.contains(e.target);
+  // Filename/find inputs must keep their own typing behaviour
+  const targetTag = e.target && e.target.tagName;
+  const isFormFieldTarget = e.target !== markdownTextarea && (targetTag === 'INPUT' || targetTag === 'TEXTAREA');
 
   if (e.ctrlKey || e.metaKey) {
     if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') {
@@ -897,15 +970,15 @@ function handleGlobalShortcuts(e) {
     return;
   }
 
-  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+  if ((e.ctrlKey || e.metaKey) && key === 's') {
     e.preventDefault();
     saveFile();
   }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
+  if ((e.ctrlKey || e.metaKey) && key === 'n') {
     e.preventDefault();
     newFile();
   }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'o') {
+  if ((e.ctrlKey || e.metaKey) && key === 'o') {
     e.preventDefault();
     openFile();
   }
@@ -925,20 +998,20 @@ function handleGlobalShortcuts(e) {
     e.preventDefault();
     setViewMode('live');
   }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+  if ((e.ctrlKey || e.metaKey) && !isFormFieldTarget && key === 'b') {
     e.preventDefault();
-    insertFormatting('**', '**');
+    applyFormattingShortcut('**', '**');
   }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'i') {
+  if ((e.ctrlKey || e.metaKey) && !isFormFieldTarget && key === 'i') {
     e.preventDefault();
-    insertFormatting('*', '*');
+    applyFormattingShortcut('*', '*');
   }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+  if ((e.ctrlKey || e.metaKey) && !isFormFieldTarget && key === 'k') {
     e.preventDefault();
-    insertFormatting('[', '](url)');
+    applyFormattingShortcut('[', '](url)');
   }
   // Ctrl+F — open find bar (all modes that have an editor)
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+  if ((e.ctrlKey || e.metaKey) && key === 'f') {
     e.preventDefault();
     showFindBar();
   }
