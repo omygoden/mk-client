@@ -15,7 +15,7 @@ let currentFilename, unsavedIndicator, dirTree, outlineView, currentFilepathStat
 let appSidebar, sidebarExpandHandle, btnToggleSidebar, tabFiles, tabOutline, paneFiles, paneOutline;
 let btnNewFile, btnOpenFile, btnSaveFile, btnModeEdit, btnModeSplit, btnModePreview, btnModeLive, btnExportPdf, btnExportHtml;
 let btnRecent, recentMenu, recentList, btnClearRecent;
-let contextMenu, ctxRefreshSidebar, ctxOpenItem, ctxShowInFolder, ctxCopyPath, ctxCreateTextFile, ctxCreateMarkdownFile, ctxCreateFolder, ctxRenameItem, ctxDeleteItem;
+let contextMenu, ctxRefreshSidebar, ctxOpenItem, ctxShowInFolder, ctxCopyPath, ctxCreateMarkdownFile, ctxCreateFolder, ctxRenameItem, ctxDeleteItem;
 let selectedPathForContextMenu = null;
 let selectedIsDir = false;
 let selectedFileTreePaths = new Set();
@@ -111,7 +111,6 @@ function initDOMReferences() {
   ctxOpenItem = document.getElementById('ctx-open-item');
   ctxShowInFolder = document.getElementById('ctx-show-in-folder');
   ctxCopyPath = document.getElementById('ctx-copy-path');
-  ctxCreateTextFile = document.getElementById('ctx-create-text-file');
   ctxCreateMarkdownFile = document.getElementById('ctx-create-markdown-file');
   ctxCreateFolder = document.getElementById('ctx-create-folder');
   ctxRenameItem = document.getElementById('ctx-rename-item');
@@ -158,6 +157,7 @@ function initDOMReferences() {
 
 const CONTEXT_MENU_VIEWPORT_PADDING = 8;
 const NEW_FILE_EXTENSIONS = ['.md', '.markdown', '.txt'];
+const DEFAULT_NEW_FILE_EXTENSION = '.md';
 
 function positionContextMenu(menu, clientX, clientY) {
   const padding = CONTEXT_MENU_VIEWPORT_PADDING;
@@ -545,17 +545,18 @@ function setupEventListeners() {
     }
   });
 
-  // Create text or Markdown files from the context menu.
-  function createContextFile(extension, typeLabel) {
+  // Create a Markdown file from the context menu. Typing a bare name is enough —
+  // the .md extension is appended unless the user spells one out.
+  function createContextFile() {
     contextMenu.style.display = 'none';
     const parentDir = getContextCreationDirectory();
     if (!parentDir) {
       alert('Please select a folder before creating a file.');
       return;
     }
-    showInputDialog(`Create New ${typeLabel} File`, `Untitled${extension}`, `Enter filename (${extension})`, async (val) => {
+    showInputDialog('Create New File', 'Untitled', 'Enter filename', async (val) => {
       if (!val) return false;
-      const formattedName = getNewFileName(val, extension);
+      const formattedName = getNewFileName(val, DEFAULT_NEW_FILE_EXTENSION);
       const result = await window.electronAPI.createInDir(parentDir, formattedName);
       if (result.success) {
         if (currentSidebarDir) await loadSidebarDirectory(currentSidebarDir);
@@ -568,8 +569,7 @@ function setupEventListeners() {
     });
   }
 
-  ctxCreateTextFile.addEventListener('click', () => createContextFile('.txt', 'Text'));
-  ctxCreateMarkdownFile.addEventListener('click', () => createContextFile('.md', 'Markdown'));
+  ctxCreateMarkdownFile.addEventListener('click', createContextFile);
 
   // Create folder from context menu
   ctxCreateFolder.addEventListener('click', () => {
@@ -2141,7 +2141,6 @@ function updateFileContextMenuState(hasNodeTarget) {
   ctxOpenItem.style.display = isSingle && hasNodeTarget ? 'flex' : 'none';
   ctxShowInFolder.style.display = isSingle && hasNodeTarget ? 'flex' : 'none';
   ctxCopyPath.style.display = selectedCount > 0 ? 'flex' : 'none';
-  ctxCreateTextFile.style.display = canCreateInTarget ? 'flex' : 'none';
   ctxCreateMarkdownFile.style.display = canCreateInTarget ? 'flex' : 'none';
   ctxCreateFolder.style.display = canCreateInTarget ? 'flex' : 'none';
   ctxRenameItem.style.display = isSingle && hasNodeTarget ? 'flex' : 'none';
@@ -2813,14 +2812,14 @@ function sortFiles(files, sortBy) {
   });
 }
 
-// Sidebar shortcut creates a text file, matching the default context-menu action.
+// Sidebar shortcut mirrors the context-menu action: a Markdown file by default.
 const btnNewFileSidebar = document.getElementById('btn-new-file-sidebar');
 if (btnNewFileSidebar) {
   btnNewFileSidebar.addEventListener('click', () => {
     if (currentSidebarDir) {
-      showInputDialog('Create New Text File', 'Untitled.txt', 'Enter filename (.txt)', async (val) => {
+      showInputDialog('Create New File', 'Untitled', 'Enter filename', async (val) => {
         if (!val) return false;
-        const formattedName = getNewFileName(val, '.txt');
+        const formattedName = getNewFileName(val, DEFAULT_NEW_FILE_EXTENSION);
         const result = await window.electronAPI.createInDir(currentSidebarDir, formattedName);
         if (result.success) {
           await loadSidebarDirectory(currentSidebarDir);
