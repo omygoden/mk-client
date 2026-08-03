@@ -29,7 +29,7 @@ let btnMinimize, btnMaximize, btnClose;
 
 // Find/Replace Bar
 let findBar, findInput, replaceInput, findCountSpan, findCaseSensitive, findUseRegex;
-let findPrevBtn, findNextBtn, findReplaceOneBtn, findReplaceAllBtn, findCloseBtn;
+let findPrevBtn, findNextBtn, findReplaceOneBtn, findReplaceAllBtn, findReplaceGroup, findCloseBtn;
 let findMatches = [];  // Array of {start, end} for each match
 let findCurrentIndex = -1;  // Current highlighted match index
 let findSearchTerm = '';    // Last searched term
@@ -150,6 +150,7 @@ function initDOMReferences() {
   findNextBtn = document.getElementById('find-next');
   findReplaceOneBtn = document.getElementById('find-replace-one');
   findReplaceAllBtn = document.getElementById('find-replace-all');
+  findReplaceGroup = document.getElementById('find-replace-group');
   findCloseBtn = document.getElementById('find-close');
   // Editor context menu
   editorContextMenu = document.getElementById('editor-context-menu');
@@ -772,6 +773,11 @@ function setupEventListeners() {
   markdownTextarea.addEventListener('contextmenu', showEditorContextMenu);
   previewContent.addEventListener('contextmenu', showEditorContextMenu);
 
+  // Keep the caret where the user right-clicked: without this the mousedown moves
+  // focus off the editor, live mode re-renders on blur, and the saved selection
+  // the menu action needs points at detached nodes.
+  editorContextMenu.addEventListener('mousedown', (e) => e.preventDefault());
+
   // Hide editor context menu on any click outside
   document.addEventListener('click', (e) => {
     if (!editorContextMenu.contains(e.target)) {
@@ -1028,8 +1034,22 @@ function handleGlobalShortcuts(e) {
 // Find / Replace Bar Logic
 // ============================================================
 
+// Preview is read-only: replacing there would serialize the whole rendered
+// document back through turndown and rewrite the user's Markdown source.
+function canReplaceInCurrentMode() {
+  return currentViewMode !== 'preview';
+}
+
+function updateFindReplaceAvailability() {
+  const display = canReplaceInCurrentMode() ? '' : 'none';
+  if (findReplaceGroup) findReplaceGroup.style.display = display;
+  if (findReplaceOneBtn) findReplaceOneBtn.style.display = display;
+  if (findReplaceAllBtn) findReplaceAllBtn.style.display = display;
+}
+
 function showFindBar() {
   if (!findBar) return;
+  updateFindReplaceAvailability();
   if (findBar.style.display !== 'none') {
     findInput.focus({ preventScroll: true });
     findInput.select();
@@ -1224,10 +1244,18 @@ function isModalOpen() {
     (unsavedModal && unsavedModal.style.display !== 'none');
 }
 
+// The find bar takes the caret deliberately. A retry queued by an earlier edit
+// must not steal it back, or the search term ends up typed into the document.
+function isFindBarFocused() {
+  if (!findBar || findBar.style.display === 'none') return false;
+  const focused = document.activeElement;
+  return focused === findInput || focused === replaceInput;
+}
+
 function focusActiveEditor(offset = null, liveSelection = null, options = {}) {
   const { scrollToCaret = false, scrollTop = null } = options;
   const restoreFocus = () => {
-    if (isModalOpen()) return;
+    if (isModalOpen() || isFindBarFocused()) return;
 
     if (currentViewMode === 'live') {
       previewContent.focus({ preventScroll: true });
@@ -1675,6 +1703,7 @@ function highlightRenderedRange(range) {
 }
 
 function replaceOne() {
+  if (!canReplaceInCurrentMode()) return;
   if (findMatches.length === 0 || findCurrentIndex === -1) return;
   recordEditorState();
 
@@ -1717,6 +1746,7 @@ function replaceOne() {
 }
 
 function replaceAll() {
+  if (!canReplaceInCurrentMode()) return;
   if (findMatches.length === 0) return;
   const replaceWith = replaceInput.value;
   const term = findInput.value;
@@ -2030,6 +2060,7 @@ function setViewMode(mode) {
     renderLiveEditMode();
   }
 
+  updateFindReplaceAvailability();
   requestAnimationFrame(updateLiveScrollControls);
   focusActiveEditor();
 }
@@ -3060,6 +3091,16 @@ function initTurndown() {
       return string;
     };
 
+    // Rendering runs with breaks:true, so a plain newline already round-trips to
+    // <br>. Turndown's default "  \n" would silently add trailing spaces to every
+    // soft line break in the source on each live re-render.
+    turndownService.addRule('lineBreak', {
+      filter: 'br',
+      replacement: function () {
+        return '\n';
+      }
+    });
+
     // Convert each HTML table once. Handling tr/td independently causes body
     // rows to be mistaken for headers and repeatedly reintroduces | --- | rows.
     turndownService.addRule('tables', {
@@ -3294,7 +3335,12 @@ function reRenderSingleBlock(blockElement) {
 }
 
 // Re-render only when the user CLICKS into a different block (not on keyboard)
-function handleLiveMouseUp() {
+function handleLiveMouseUp(e) {
+  // A right-click only opens the context menu. Re-rendering the previously edited
+  // block here would replace the very nodes the menu action has just captured,
+  // so the formatting would land on detached elements and appear to do nothing.
+  if (e && e.button === 2) return;
+
   requestAnimationFrame(() => {
     if (currentViewMode !== 'live') return;
 
@@ -3386,7 +3432,12 @@ function handleLiveBeforeInput(e) {
   }
 }
 
-function handleLiveEditBlur() {
+function handleLiveEditBlur(e) {
+  // A click on the editor context menu must not rebuild the live DOM: the action
+  // about to run still holds a Range into the current nodes, and re-rendering
+  // would detach them so the formatting silently applies to discarded elements.
+  if (e && e.relatedTarget && editorContextMenu && editorContextMenu.contains(e.relatedTarget)) return;
+
   const cursorSelection = window.getSelection();
   if (!previewContent.contains(cursorSelection.anchorNode)) {
     syncLiveContentToTextarea();

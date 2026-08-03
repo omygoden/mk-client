@@ -308,6 +308,62 @@ test('ignores formatting shortcuts pressed inside a plain text input', () => {
   assert.equal(textarea.value, 'hello');
 });
 
+test('keeps the live DOM intact when focus moves into the editor context menu', () => {
+  const harness = createRendererHarness();
+  const preview = harness.elements.get('preview-content');
+  const menu = harness.elements.get('editor-context-menu');
+  harness.context.setViewMode('live');
+  preview.innerHTML = '<p>hello</p>';
+
+  harness.context.handleLiveEditBlur({ relatedTarget: menu });
+
+  assert.equal(preview.innerHTML, '<p>hello</p>');
+});
+
+test('does not schedule a live block re-render for a right-click mouseup', () => {
+  const harness = createRendererHarness();
+  harness.context.setViewMode('live');
+
+  let scheduled = 0;
+  harness.context.requestAnimationFrame = () => { scheduled += 1; };
+
+  harness.context.handleLiveMouseUp({ button: 2 });
+  assert.equal(scheduled, 0);
+
+  harness.context.handleLiveMouseUp({ button: 0 });
+  assert.equal(scheduled, 1);
+});
+
+test('does not steal focus back from the find bar after a pending editor focus retry', () => {
+  const harness = createRendererHarness();
+  const findBar = harness.elements.get('find-bar');
+  const findInput = harness.elements.get('find-input');
+  const preview = harness.elements.get('preview-content');
+  findBar.style.display = 'block';
+  findInput.focus();
+
+  harness.context.focusActiveEditor(0);
+  harness.flushAnimationFrames();
+  harness.flushTimers();
+
+  assert.equal(harness.document.activeElement, findInput);
+  assert.notEqual(harness.document.activeElement, preview);
+});
+
+test('hides the replace controls in read-only preview mode and restores them elsewhere', () => {
+  const harness = createRendererHarness();
+  const group = harness.elements.get('find-replace-group');
+  const replaceAllButton = harness.elements.get('find-replace-all');
+
+  harness.context.setViewMode('preview');
+  assert.equal(group.style.display, 'none');
+  assert.equal(replaceAllButton.style.display, 'none');
+
+  harness.context.setViewMode('edit');
+  assert.equal(group.style.display, '');
+  assert.equal(replaceAllButton.style.display, '');
+});
+
 test('uses the requested default extension without changing an explicit text or Markdown extension', () => {
   const harness = createRendererHarness();
 
