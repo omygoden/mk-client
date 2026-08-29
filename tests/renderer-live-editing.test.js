@@ -283,10 +283,7 @@ test('re-renders the block the user actually edited after earlier blocks shift',
   assert.deepEqual(reRendered, ['two']);
 });
 
-test('pastes clipboard content into the live editor as plain text', () => {
-  const harness = createLiveHarness();
-  harness.context.setViewMode('live');
-
+function pasteInto(harness, text) {
   const inserted = [];
   harness.context.document.execCommand = (command, showUi, value) => {
     inserted.push([command, value]);
@@ -296,13 +293,47 @@ test('pastes clipboard content into the live editor as plain text', () => {
   let defaultPrevented = false;
   harness.context.handleLivePaste({
     clipboardData: {
-      getData: (type) => (type === 'text/plain' ? 'plain text' : '<b>rich</b>')
+      getData: (type) => (type === 'text/plain' ? text : '<b>rich</b>')
     },
     preventDefault() { defaultPrevented = true; }
   });
 
+  return { inserted, defaultPrevented };
+}
+
+test('never lets clipboard HTML into the live editor', () => {
+  const harness = createLiveHarness();
+  harness.context.setViewMode('live');
+
+  const { inserted, defaultPrevented } = pasteInto(harness, 'plain text');
+
   assert.equal(defaultPrevented, true, 'the browser must not insert clipboard HTML');
   assert.deepEqual(inserted, [['insertText', 'plain text']]);
+});
+
+test('parses a multi-line paste as Markdown instead of one block per line', () => {
+  const harness = createRendererHarness({
+    contextOverrides: {
+      MutationObserver: createObserverFactory({ connected: false, records: [] }),
+      TurndownService: function TurndownService() {
+        return { addRule() {}, turndown: (html) => html.replace(/<[^>]+>/g, '') };
+      },
+      marked: require('marked').marked,
+      DOMPurify: { sanitize: (html) => html }
+    }
+  });
+  harness.context.setViewMode('live');
+
+  const { inserted } = pasteInto(harness, '# Title\n\nA paragraph.\n\n- one\n- two\n');
+
+  assert.equal(inserted.length, 1);
+  const [command, html] = inserted[0];
+  // insertText would turn every newline into its own block, and every blank line
+  // into a permanent empty-paragraph placeholder.
+  assert.equal(command, 'insertHTML');
+  assert.match(html, /<h1[^>]*>Title<\/h1>/);
+  assert.match(html, /<ul>/);
+  assert.doesNotMatch(html, /<p><br><\/p>/, 'blank lines must separate paragraphs, not become placeholders');
 });
 
 test('takes the heading list to the same edge as the document', () => {

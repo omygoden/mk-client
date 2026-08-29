@@ -207,6 +207,7 @@ function getNewFileName(fileName, defaultExtension) {
 document.addEventListener('DOMContentLoaded', () => {
   // Batch-resolve all DOM references first
   initDOMReferences();
+  configureMarkdownRenderer();
 
   // 1. Detect OS and set appropriate titlebar class
   if (navigator.userAgent.indexOf('Mac') !== -1) {
@@ -2325,17 +2326,23 @@ function updateStats() {
 }
 
 // --- Markdown Renderer ---
-function renderMarkdown() {
-  const markdownText = markdownTextarea.value;
-
-  // Custom marked options for Typora-like rendering (GFM style)
+// Configured once at startup rather than inside renderMarkdown(): the app opens
+// straight into live mode, which never calls renderMarkdown, so live editing used
+// to parse with marked's defaults (breaks: false) while preview and export used
+// breaks: true. The same document rendered differently in the two views, and a
+// single newline inside a paragraph was dropped on the next live re-render —
+// Turndown maps <br> back to "\n", which only round-trips when breaks is on.
+function configureMarkdownRenderer() {
   marked.setOptions({
     breaks: true,
     gfm: true,
     headerIds: true,
     mangle: false
   });
+}
 
+function renderMarkdown() {
+  const markdownText = markdownTextarea.value;
   const rawHtml = marked.parse(markdownText);
   // Sanitize to prevent scripts running inside preview
   const safeHtml = DOMPurify.sanitize(rawHtml);
@@ -3705,7 +3712,19 @@ function handleLivePaste(e) {
   if (plainText) {
     // execCommand keeps the browser's own caret and selection handling, and still
     // fires beforeinput/input so history and the block cache stay in step.
-    document.execCommand('insertText', false, plainText);
+    if (/\r?\n/.test(plainText)) {
+      // Chromium's insertText splits the text on every newline into its own block,
+      // so each blank line between paragraphs lands as an empty block that
+      // serialises to a permanent <p><br></p> placeholder — a normal document
+      // pastes in with dozens of stray blank lines, and its headings and lists
+      // stay literal text. Parsing the clipboard as Markdown gives real blocks and
+      // lets blank lines do what they mean: separate paragraphs.
+      document.execCommand('insertHTML', false, DOMPurify.sanitize(marked.parse(plainText)));
+    } else {
+      // A single line has no block structure to recover, and must stay inline so
+      // pasting a word mid-sentence does not break the paragraph in two.
+      document.execCommand('insertText', false, plainText);
+    }
   }
   breakHistoryCoalescing();
 }
