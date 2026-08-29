@@ -47,11 +47,19 @@ function getOpenableFilePath(filePath) {
 function readOpenableFile(filePath) {
   const safePath = getOpenableFilePath(filePath);
   if (!safePath) return null;
-  return {
-    filePath: safePath,
-    content: fs.readFileSync(safePath, 'utf-8'),
-    fileName: path.basename(safePath)
-  };
+  // This runs straight off Electron's own event emitters (open-file,
+  // second-instance, did-finish-load), so a read that throws — no permission, or
+  // the file removed between the stat and the read — takes the main process down.
+  try {
+    return {
+      filePath: safePath,
+      content: fs.readFileSync(safePath, 'utf-8'),
+      fileName: path.basename(safePath)
+    };
+  } catch (error) {
+    console.error(`Failed to read ${safePath}:`, error);
+    return null;
+  }
 }
 
 function sendOpenFileToRenderer(filePath) {
@@ -99,7 +107,9 @@ function createWindow() {
 
   // Load the main HTML file
   mainWindow.loadFile('index.html');
-  mainWindow.webContents.once('did-finish-load', flushPendingOpenFile);
+  // Not `once`: a file handed over while the window is reloading would otherwise
+  // sit in pendingOpenFilePath with nothing left to flush it.
+  mainWindow.webContents.on('did-finish-load', flushPendingOpenFile);
 
   // Toggle DevTools with Ctrl+Shift+I, Cmd+Alt+I, or F12
   mainWindow.webContents.on('before-input-event', (event, input) => {

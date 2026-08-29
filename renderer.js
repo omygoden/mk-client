@@ -308,20 +308,12 @@ function setupEventListeners() {
     if (button) button.addEventListener('mousedown', e => e.preventDefault());
   });
   if (btnScrollTop) {
-    btnScrollTop.addEventListener('click', () => {
-      previewContainer.scrollTo({ top: 0 });
-    });
+    btnScrollTop.addEventListener('click', () => scrollLiveDocumentToEdge('top'));
   }
   if (btnScrollBottom) {
-    btnScrollBottom.addEventListener('click', () => {
-      previewContainer.scrollTo({ top: previewContainer.scrollHeight });
-    });
+    btnScrollBottom.addEventListener('click', () => scrollLiveDocumentToEdge('bottom'));
   }
-  previewContainer.addEventListener('scroll', () => {
-    updateLiveScrollControls();
-    updateActiveLiveHeading();
-    updateLiveHeadingNavPosition();
-  }, { passive: true });
+  previewContainer.addEventListener('scroll', scheduleLiveViewportUpdate, { passive: true });
   window.addEventListener('resize', () => {
     updateLiveScrollControls();
     updateLiveHeadingNavPosition();
@@ -332,7 +324,7 @@ function setupEventListeners() {
   let renderTimer = null;
   markdownTextarea.addEventListener('beforeinput', (e) => {
     if (!isRestoringHistory && !(e.inputType || '').startsWith('history')) {
-      recordEditorState();
+      recordEditorState(e.inputType, e.data);
     }
   });
   markdownTextarea.addEventListener('input', () => {
@@ -628,20 +620,25 @@ function setupEventListeners() {
     const confirmDelete = confirm(`Are you sure you want to delete ${label}?`);
     if (confirmDelete) {
       const errors = [];
+      // An unsaved new document already has a null path, so "no current path" is
+      // not evidence that this delete hit the open file — track it explicitly, or
+      // deleting an unrelated file wipes whatever the user was writing.
+      let deletedOpenFile = false;
       for (const targetPath of targetPaths) {
         const result = await window.electronAPI.deleteItem(targetPath);
         if (result.success) {
           if (targetPath === currentFilePath) {
             currentFilePath = null;
+            deletedOpenFile = true;
           }
         } else {
           errors.push(`${targetPath}: ${result.error}`);
         }
       }
       if (errors.length === 0) {
-        if (!currentFilePath && targetPaths.length > 0) {
-          newFile();
-        }
+        // newFile() may await an unsaved-changes prompt; without awaiting it the
+        // sidebar reloads behind the still-open dialog.
+        if (deletedOpenFile) await newFile();
       } else {
         alert(`Some items could not be deleted:\n${errors.join('\n')}`);
       }
@@ -1100,74 +1097,6 @@ function hideFindBar() {
 // ============================================================
 // Editor focus and cross-mode undo/redo
 // ============================================================
-function getNodePath(root, node) {
-  if (!root || !node || !root.contains(node)) return null;
-
-  const path = [];
-  let current = node;
-  while (current && current !== root) {
-    const parent = current.parentNode;
-    if (!parent) return null;
-    path.unshift(Array.prototype.indexOf.call(parent.childNodes, current));
-    current = parent;
-  }
-  return path;
-}
-
-function getNodeFromPath(root, path) {
-  if (!root || !Array.isArray(path)) return null;
-
-  let current = root;
-  for (const index of path) {
-    if (!current || !current.childNodes || index < 0 || index >= current.childNodes.length) {
-      return null;
-    }
-    current = current.childNodes[index];
-  }
-  return current;
-}
-
-function clampNodeOffset(node, offset) {
-  if (!node) return 0;
-  const maxOffset = node.nodeType === Node.TEXT_NODE
-    ? node.textContent.length
-    : node.childNodes.length;
-  return Math.max(0, Math.min(offset, maxOffset));
-}
-
-function captureLiveSelectionState() {
-  const selection = window.getSelection();
-  if (!selection.rangeCount || !previewContent.contains(selection.anchorNode)) return null;
-
-  return {
-    anchorPath: getNodePath(previewContent, selection.anchorNode),
-    anchorOffset: selection.anchorOffset,
-    focusPath: getNodePath(previewContent, selection.focusNode),
-    focusOffset: selection.focusOffset
-  };
-}
-
-function restoreLiveSelectionState(selectionState) {
-  if (!selectionState) return false;
-
-  const anchorNode = getNodeFromPath(previewContent, selectionState.anchorPath);
-  const focusNode = getNodeFromPath(previewContent, selectionState.focusPath);
-  if (!anchorNode || !focusNode) return false;
-
-  const range = document.createRange();
-  try {
-    range.setStart(anchorNode, clampNodeOffset(anchorNode, selectionState.anchorOffset));
-    range.setEnd(focusNode, clampNodeOffset(focusNode, selectionState.focusOffset));
-  } catch {
-    return false;
-  }
-
-  const selection = window.getSelection();
-  selection.removeAllRanges();
-  selection.addRange(range);
-  return true;
-}
-
 function getSelectionRangeRect() {
   const selection = window.getSelection();
   if (!selection.rangeCount || !previewContent.contains(selection.anchorNode)) return null;
@@ -1252,17 +1181,26 @@ function isFindBarFocused() {
   return focused === findInput || focused === replaceInput;
 }
 
-function focusActiveEditor(offset = null, liveSelection = null, options = {}) {
-  const { scrollToCaret = false, scrollTop = null } = options;
+// Each focus restore invalidates the pending retries queued by the previous one.
+// Without this, the 50ms/150ms retries of an earlier restore fire *after* a newer
+// one (a second Ctrl+Z, a click elsewhere) and drag the caret and scroll position
+// back to the older state — the "cursor jumps around" symptom.
+let focusRestoreToken = 0;
+
+function focusActiveEditor(offset = null, options = {}) {
+  const { scrollToCaret = false, scrollTop = null, retry = true, immediate = false } = options;
+  const token = ++focusRestoreToken;
   const restoreFocus = () => {
+    if (token !== focusRestoreToken) return;
     if (isModalOpen() || isFindBarFocused()) return;
 
     if (currentViewMode === 'live') {
       previewContent.focus({ preventScroll: true });
-      const restoredSelection = restoreLiveSelectionState(liveSelection);
-      if (!restoredSelection) {
+      if (offset === null) {
         const currentOffset = getCaretCharOffset(previewContent);
-        setCaretCharOffset(previewContent, offset ?? (currentOffset >= 0 ? currentOffset : 0));
+        setCaretCharOffset(previewContent, currentOffset >= 0 ? currentOffset : 0);
+      } else {
+        setCaretCharOffset(previewContent, offset);
       }
     } else if (currentViewMode !== 'preview') {
       markdownTextarea.focus({ preventScroll: true });
@@ -1277,10 +1215,13 @@ function focusActiveEditor(offset = null, liveSelection = null, options = {}) {
     }
   };
 
-  // Native confirm/file dialogs can return focus a little later than the next
-  // animation frame in Electron. Retry briefly so the sidebar button or window
-  // chrome cannot retain focus and leave the editor without a caret.
+  // Undo/redo already owns the focus, so it restores synchronously and only needs
+  // one post-layout pass to settle the scroll position. Everything else may be
+  // waiting on a native dialog to hand focus back, which in Electron can land
+  // later than the next animation frame — those keep the delayed retries.
+  if (immediate) restoreFocus();
   requestAnimationFrame(() => requestAnimationFrame(restoreFocus));
+  if (!retry) return;
   setTimeout(restoreFocus, 50);
   setTimeout(restoreFocus, 150);
 }
@@ -1293,25 +1234,75 @@ function getActiveEditorOffset() {
   return markdownTextarea.selectionStart;
 }
 
+// Caret offsets in the two editors are not interchangeable: the textarea counts
+// Markdown source characters, live mode counts rendered text characters. Keeping
+// them in separate fields stops a Markdown offset being applied to the rendered
+// document (and vice versa), which used to drop the caret at an unrelated spot.
+// A toolbar or context-menu action can leave the caret outside previewContent, so
+// the live offset is unreadable at that moment. Falling back to the last known
+// position keeps undo from dumping the caret at the top of the document.
+let lastKnownLiveCaretOffset = 0;
+
 function captureEditorState() {
-  const liveOffset = currentViewMode === 'live' ? getCaretCharOffset(previewContent) : -1;
+  let liveOffset = -1;
+  if (currentViewMode === 'live') {
+    const measured = getCaretCharOffset(previewContent);
+    if (measured >= 0) lastKnownLiveCaretOffset = measured;
+    liveOffset = measured >= 0 ? measured : lastKnownLiveCaretOffset;
+  }
+
   return {
     content: markdownTextarea.value,
-    selectionStart: liveOffset >= 0 ? liveOffset : markdownTextarea.selectionStart,
-    selectionEnd: liveOffset >= 0 ? liveOffset : markdownTextarea.selectionEnd,
-    liveSelection: currentViewMode === 'live' ? captureLiveSelectionState() : null,
+    selectionStart: markdownTextarea.selectionStart,
+    selectionEnd: markdownTextarea.selectionEnd,
+    liveOffset,
     liveScrollTop: previewContainer ? previewContainer.scrollTop : 0,
     textareaScrollTop: markdownTextarea ? markdownTextarea.scrollTop : 0
   };
 }
 
-function recordEditorState() {
+// Typing a run of characters is one undo step, not one step per keystroke. Beyond
+// matching what users expect from Ctrl+Z, this keeps the history from snapshotting
+// the whole document on every key press, which is what made large files unusable.
+const HISTORY_COALESCE_MS = 600;
+const COALESCABLE_INPUT_TYPES = new Set([
+  'insertText',
+  'insertCompositionText',
+  'deleteContentBackward',
+  'deleteContentForward'
+]);
+let lastHistoryRecordAt = 0;
+let lastHistoryInputType = '';
+
+function breakHistoryCoalescing() {
+  lastHistoryRecordAt = 0;
+  lastHistoryInputType = '';
+}
+
+function shouldCoalesceHistory(inputType, data) {
+  if (!inputType || !COALESCABLE_INPUT_TYPES.has(inputType)) return false;
+  if (inputType !== lastHistoryInputType) return false;
+  // A space or newline ends the current word, so it also ends the undo group.
+  if (typeof data === 'string' && /\s/.test(data)) return false;
+  return Date.now() - lastHistoryRecordAt < HISTORY_COALESCE_MS;
+}
+
+function recordEditorState(inputType = '', data = null) {
   if (isRestoringHistory) return;
+
+  if (shouldCoalesceHistory(inputType, data)) {
+    lastHistoryRecordAt = Date.now();
+    return;
+  }
+  lastHistoryInputType = COALESCABLE_INPUT_TYPES.has(inputType) ? inputType : '';
+  lastHistoryRecordAt = Date.now();
+
   const state = captureEditorState();
   const previous = editorHistory.peekUndo();
   if (previous && previous.content === state.content &&
       previous.selectionStart === state.selectionStart &&
-      previous.selectionEnd === state.selectionEnd) {
+      previous.selectionEnd === state.selectionEnd &&
+      previous.liveOffset === state.liveOffset) {
     return;
   }
   editorHistory.pushUndo(state);
@@ -1319,6 +1310,8 @@ function recordEditorState() {
 
 function resetEditorHistory() {
   editorHistory.reset();
+  breakHistoryCoalescing();
+  lastKnownLiveCaretOffset = 0;
 }
 
 function restoreEditorState(state) {
@@ -1336,20 +1329,29 @@ function restoreEditorState(state) {
     renderMarkdown();
   }
 
-  const offset = Math.max(0, Math.min(state.selectionStart, state.content.length));
-  const scrollTop = currentViewMode === 'live' ? state.liveScrollTop : state.textareaScrollTop;
-  focusActiveEditor(offset, state.liveSelection, { scrollToCaret: true, scrollTop });
+  // In live mode the DOM was just rebuilt from Markdown, so any recorded node
+  // path is stale — only the rendered character offset still means anything.
+  const isLive = currentViewMode === 'live';
+  const offset = isLive
+    ? (state.liveOffset >= 0 ? state.liveOffset : null)
+    : Math.max(0, Math.min(state.selectionStart, state.content.length));
+  const scrollTop = isLive ? state.liveScrollTop : state.textareaScrollTop;
+  focusActiveEditor(offset, { scrollToCaret: true, scrollTop, retry: false, immediate: true });
   isRestoringHistory = false;
 }
 
 function undoEditorChange() {
   if (editorHistory.undoLength === 0) return;
+  breakHistoryCoalescing();
+  flushPendingLiveDerivedUpdates();
   editorHistory.pushRedo(captureEditorState());
   restoreEditorState(editorHistory.popUndo());
 }
 
 function redoEditorChange() {
   if (editorHistory.redoLength === 0) return;
+  breakHistoryCoalescing();
+  flushPendingLiveDerivedUpdates();
   editorHistory.pushUndo(captureEditorState(), { preserveRedo: true });
   restoreEditorState(editorHistory.popRedo());
 }
@@ -1448,13 +1450,29 @@ function insertTableRowAtContext(position) {
   const currentRow = currentCell?.closest('tr');
   if (!currentCell || !currentRow) return;
 
+  const isHeaderRow = currentRow.closest('thead') !== null ||
+    getTableCells(currentRow).some((cell) => cell.tagName === 'TH');
+  // A Markdown table cannot hold a row above its header: inserting one there made
+  // the new empty row the header and demoted the real header to a data row. The
+  // closest thing the format can express is the first body row.
+  const insertAboveHeader = position === 'above' && isHeaderRow;
+
   recordEditorState();
   const newRow = document.createElement('tr');
   getTableCells(currentRow).forEach((cell) => {
-    newRow.appendChild(createEmptyTableCell(cell));
+    newRow.appendChild(createEmptyTableCell(insertAboveHeader ? null : cell));
   });
 
-  if (position === 'above') {
+  if (insertAboveHeader) {
+    const table = currentRow.closest('table');
+    let tableBody = table?.querySelector('tbody');
+    if (table && !tableBody) {
+      tableBody = document.createElement('tbody');
+      table.appendChild(tableBody);
+    }
+    if (tableBody) tableBody.insertBefore(newRow, tableBody.firstChild);
+    else currentRow.parentNode.insertBefore(newRow, currentRow.nextSibling);
+  } else if (position === 'above') {
     currentRow.parentNode.insertBefore(newRow, currentRow);
   } else {
     currentRow.parentNode.insertBefore(newRow, currentRow.nextSibling);
@@ -2062,7 +2080,34 @@ function setViewMode(mode) {
 
   updateFindReplaceAvailability();
   requestAnimationFrame(updateLiveScrollControls);
+  breakHistoryCoalescing();
   focusActiveEditor();
+}
+
+// Scroll fires many times per frame, and updateActiveLiveHeading walks every
+// heading and reads offsetTop. Collapsing the work into one animation frame keeps
+// a large document scrollable instead of thrashing layout on each event.
+let liveViewportUpdateHandle = null;
+
+function scheduleLiveViewportUpdate() {
+  if (liveViewportUpdateHandle !== null) return;
+  liveViewportUpdateHandle = requestAnimationFrame(() => {
+    liveViewportUpdateHandle = null;
+    updateLiveScrollControls();
+    updateActiveLiveHeading();
+    updateLiveHeadingNavPosition();
+  });
+}
+
+// Jumping the document to an edge takes the heading list with it, so the outline
+// on the left lines up with what is actually on screen.
+function scrollLiveDocumentToEdge(edge) {
+  const toBottom = edge === 'bottom';
+  previewContainer.scrollTo({ top: toBottom ? previewContainer.scrollHeight : 0 });
+  if (liveHeadingNav) {
+    liveHeadingNav.scrollTop = toBottom ? liveHeadingNav.scrollHeight : 0;
+  }
+  scheduleLiveViewportUpdate();
 }
 
 function updateLiveScrollControls() {
@@ -2299,23 +2344,60 @@ function renderMarkdown() {
 }
 
 // --- Document Outline Generator ---
+// The live outline maps its Nth entry onto the Nth rendered <h*>, so this list has
+// to agree with what Markdown actually renders. A bare line scan does not: a `#`
+// inside a fenced code block is not a heading, and a Setext underline makes one
+// without any `#` at all. Either mismatch shifts every later outline entry, so
+// clicking a chapter jumps to the wrong one.
 function getMarkdownHeaders() {
-  const text = markdownTextarea.value;
-  const lines = text.split('\n');
+  const lines = markdownTextarea.value.split('\n');
   const headers = [];
 
-  // Simple regex to parse headings while writing
-  const headerRegex = /^(#{1,6})\s+(.+)$/;
+  // The text is optional: `###` on its own still renders as an empty heading, and
+  // leaving it out would shift the outline while a heading is being typed.
+  const atxRegex = /^ {0,3}(#{1,6})(?:\s+(.*?))?(?:\s+#+)?\s*$/;
+  const fenceRegex = /^ {0,3}(`{3,}|~{3,})/;
+  const setextRegex = /^ {0,3}(=+|-+)\s*$/;
+
+  let openFence = null;
 
   lines.forEach((line, index) => {
-    const match = line.match(headerRegex);
-    if (match) {
-      headers.push({
-        level: match[1].length,
-        text: match[2],
-        lineIndex: index
-      });
+    const fenceMatch = line.match(fenceRegex);
+    if (fenceMatch) {
+      const marker = fenceMatch[1][0];
+      if (openFence === null) openFence = marker;
+      else if (openFence === marker) openFence = null;
+      return;
     }
+    if (openFence !== null) return;
+
+    const atxMatch = line.match(atxRegex);
+    if (atxMatch) {
+      headers.push({ level: atxMatch[1].length, text: atxMatch[2] || '', lineIndex: index });
+      return;
+    }
+
+    // A Setext underline turns the paragraph line above it into a heading. Only a
+    // plain paragraph qualifies, which rules out `---` acting as a rule, YAML front
+    // matter, a list item or a table divider.
+    const setextMatch = line.match(setextRegex);
+    if (!setextMatch || index === 0) return;
+
+    const previous = lines[index - 1];
+    const isParagraph = previous.trim() !== '' &&
+      !fenceRegex.test(previous) &&
+      !atxRegex.test(previous) &&
+      !setextRegex.test(previous) &&
+      !/^ {0,3}([-*+]|\d+[.)])\s/.test(previous) &&
+      !/^ {0,3}>/.test(previous) &&
+      !previous.includes('|');
+    if (!isParagraph) return;
+
+    headers.push({
+      level: setextMatch[1][0] === '=' ? 1 : 2,
+      text: previous.trim(),
+      lineIndex: index - 1
+    });
   });
 
   return headers;
@@ -2365,8 +2447,20 @@ function getLiveHeadingNavLabel(text) {
     : normalizedText;
 }
 
+let lastHeadingNavSignature = null;
+
 function renderLiveHeadingNav(headers) {
   if (!liveHeadingNav) return;
+
+  // Rebuilding hundreds of buttons (each with two listeners) on every debounce
+  // tick is wasted work whenever the headings themselves did not change.
+  const signature = headers.map((header) => `${header.level}\u0000${header.lineIndex}\u0000${header.text}`).join('\u0001');
+  if (signature === lastHeadingNavSignature) {
+    updateLiveHeadingNavPosition();
+    return;
+  }
+  lastHeadingNavSignature = signature;
+
   liveHeadingNav.replaceChildren();
 
   if (headers.length === 0) {
@@ -2421,7 +2515,7 @@ function scrollToLiveHeading(lineIndex) {
     return;
   }
 
-  const heading = Array.from(previewContent.querySelectorAll('h1, h2, h3, h4, h5, h6'))[getLiveHeadingIndexForLine(lineIndex)];
+  const heading = getLiveHeadingElements()[getLiveHeadingIndexForLine(lineIndex)];
   if (!heading) {
     scrollToLine(lineIndex);
     return;
@@ -2437,9 +2531,25 @@ function getLiveHeadingIndexForLine(lineIndex) {
   return headers.findIndex((header) => header.lineIndex === lineIndex);
 }
 
+// Re-querying every heading on each scroll frame is the expensive half of this
+// function; the list only changes when the document does, and the live mutation
+// observer already knows when that happens.
+let liveHeadingElements = null;
+
+function invalidateLiveHeadingElements() {
+  liveHeadingElements = null;
+}
+
+function getLiveHeadingElements() {
+  if (liveHeadingElements === null) {
+    liveHeadingElements = Array.from(previewContent.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+  }
+  return liveHeadingElements;
+}
+
 function updateActiveLiveHeading(activeHeading = null) {
   if (!liveHeadingNav || currentViewMode !== 'live') return;
-  const headings = Array.from(previewContent.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+  const headings = getLiveHeadingElements();
   const headerButtons = Array.from(liveHeadingNav.querySelectorAll('.live-heading-nav-item'));
   if (headings.length === 0 || headerButtons.length === 0) return;
 
@@ -3212,31 +3322,135 @@ function setCaretCharOffset(container, offset) {
 // Keyboard actions (Enter, arrows, Ctrl+A) never trigger re-render, avoiding
 // cursor jumps, empty-line loss, and selection reset issues.
 
-let lastActiveBlockIndex = -1;
-let modifiedBlockIndices = new Set();  // Track which blocks were actually edited by the user
+// Tracked by element reference, never by index: pressing Enter or deleting a
+// paragraph shifts every later block's index, so a stored index silently starts
+// pointing at a different block — which meant edited blocks were never
+// re-rendered while untouched ones got rewritten through a Turndown round trip.
+let lastActiveBlock = null;
+let liveEditedBlocks = new WeakSet();  // Blocks the user actually typed in
+
+// Turning the whole live document back into Markdown on every keystroke is O(document):
+// on a 250KB file that is ~9000 Turndown conversions per key press, which pins the
+// renderer's main thread and eventually takes the window down. Instead each top-level
+// block caches its Markdown, and a MutationObserver marks only the blocks that actually
+// changed, so a keystroke re-converts one block. The observer (rather than the input
+// event) is the source of truth because table edits, context-menu formatting and
+// execCommand all mutate the DOM through paths the input handler does not see.
+let liveBlockMarkdownCache = new WeakMap();
+let liveDirtyBlocks = new Set();
+let liveMutationObserver = null;
+let liveCachePrimeHandle = null;
+
+function getTopLevelLiveBlock(node) {
+  let current = node;
+  while (current && current.parentNode !== previewContent) {
+    current = current.parentNode;
+  }
+  return current && current.parentNode === previewContent ? current : null;
+}
+
+function collectLiveMutations(records) {
+  if (records.length > 0) invalidateLiveHeadingElements();
+  for (const record of records) {
+    const block = getTopLevelLiveBlock(record.target);
+    if (block) liveDirtyBlocks.add(block);
+    if (record.target === previewContent) {
+      record.addedNodes.forEach((node) => {
+        const added = getTopLevelLiveBlock(node);
+        if (added) liveDirtyBlocks.add(added);
+      });
+    }
+  }
+}
+
+function flushLiveMutations() {
+  if (liveMutationObserver) collectLiveMutations(liveMutationObserver.takeRecords());
+}
+
+function resetLiveBlockCache() {
+  liveBlockMarkdownCache = new WeakMap();
+  liveDirtyBlocks.clear();
+}
+
+function startLiveMutationObserver() {
+  // Without an observer there is no reliable way to know which blocks changed,
+  // and serving stale cached Markdown would silently lose edits — so in that
+  // case caching stays off and every block is reconverted.
+  if (typeof MutationObserver !== 'function') return;
+  if (!liveMutationObserver) {
+    liveMutationObserver = new MutationObserver(collectLiveMutations);
+  }
+  liveMutationObserver.observe(previewContent, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+    attributes: true
+  });
+}
+
+function stopLiveMutationObserver() {
+  if (!liveMutationObserver) return;
+  liveMutationObserver.takeRecords();
+  liveMutationObserver.disconnect();
+  liveMutationObserver = null;
+}
+
+// A freshly rendered document has an empty cache, so the first keystroke after a
+// re-render would pay the full conversion cost. Fill the cache during idle time
+// instead, in slices small enough not to block a frame.
+const LIVE_CACHE_PRIME_CHUNK = 40;
+
+function cancelLiveCachePriming() {
+  if (liveCachePrimeHandle === null) return;
+  if (typeof cancelIdleCallback === 'function') cancelIdleCallback(liveCachePrimeHandle);
+  else clearTimeout(liveCachePrimeHandle);
+  liveCachePrimeHandle = null;
+}
+
+function scheduleLiveCachePriming(startIndex = 0) {
+  cancelLiveCachePriming();
+  const schedule = typeof requestIdleCallback === 'function'
+    ? requestIdleCallback
+    : (callback) => setTimeout(callback, 32);
+
+  liveCachePrimeHandle = schedule(() => {
+    liveCachePrimeHandle = null;
+    if (currentViewMode !== 'live' || !turndownService || !liveMutationObserver) return;
+
+    const blocks = previewContent.children;
+    const end = Math.min(blocks.length, startIndex + LIVE_CACHE_PRIME_CHUNK);
+    for (let i = startIndex; i < end; i++) {
+      const block = blocks[i];
+      if (liveDirtyBlocks.has(block) || liveBlockMarkdownCache.has(block)) continue;
+      if (isEmptyLiveBlock(block)) continue;
+      liveBlockMarkdownCache.set(block, turndownService.turndown(block.outerHTML).trim());
+    }
+    if (end < blocks.length) scheduleLiveCachePriming(end);
+  });
+}
 
 // Clean up live edit mode listeners when switching away
 function cleanupLiveEditMode() {
+  flushPendingLiveDerivedUpdates();
+  cancelLiveCachePriming();
+  stopLiveMutationObserver();
+  resetLiveBlockCache();
   previewContent.removeEventListener('input', handleLiveEditInput);
   previewContent.removeEventListener('beforeinput', handleLiveBeforeInput);
   previewContent.removeEventListener('mouseup', handleLiveMouseUp);
   previewContent.removeEventListener('blur', handleLiveEditBlur);
-  lastActiveBlockIndex = -1;
-  modifiedBlockIndices.clear();
+  previewContent.removeEventListener('paste', handleLivePaste);
+  lastActiveBlock = null;
+  liveEditedBlocks = new WeakSet();
 }
 
-// Find the index of the top-level block element containing the cursor
-function getCurrentBlockIndex() {
+// Find the top-level block element containing the cursor
+function getCurrentLiveBlock() {
   const sel = window.getSelection();
-  if (!sel.rangeCount) return -1;
-  let node = sel.anchorNode;
-  if (!node || !previewContent.contains(node)) return -1;
-  // Walk up to find the direct child of previewContent
-  while (node && node.parentNode !== previewContent) {
-    node = node.parentNode;
-  }
-  if (!node) return -1;
-  return Array.from(previewContent.children).indexOf(node);
+  if (!sel.rangeCount) return null;
+  const node = sel.anchorNode;
+  if (!node || !previewContent.contains(node)) return null;
+  return getTopLevelLiveBlock(node);
 }
 
 // Parse markdown to HTML while preserving empty lines that would otherwise
@@ -3280,12 +3494,22 @@ function renderLiveEditMode() {
   // Enable contenteditable for the entire area
   previewContent.contentEditable = "true";
 
+  // The rebuild replaces every node, so the observer must not be running (its
+  // records would be meaningless) and the per-block cache must start over.
+  cancelLiveCachePriming();
+  stopLiveMutationObserver();
+
   // Parse Markdown to HTML, preserving empty lines
   previewContent.innerHTML = parseMarkdownPreservingEmptyLines(markdownText);
 
+  resetLiveBlockCache();
+  invalidateLiveHeadingElements();
+  startLiveMutationObserver();
+  scheduleLiveCachePriming();
+
   // Reset block tracking
-  lastActiveBlockIndex = -1;
-  modifiedBlockIndices.clear();
+  lastActiveBlock = null;
+  liveEditedBlocks = new WeakSet();
 
   // Bind events (remove first to avoid duplicates)
   previewContent.removeEventListener('input', handleLiveEditInput);
@@ -3299,6 +3523,9 @@ function renderLiveEditMode() {
 
   previewContent.removeEventListener('blur', handleLiveEditBlur);
   previewContent.addEventListener('blur', handleLiveEditBlur);
+
+  previewContent.removeEventListener('paste', handleLivePaste);
+  previewContent.addEventListener('paste', handleLivePaste);
 
   requestAnimationFrame(updateLiveScrollControls);
   renderLiveHeadingNav(getMarkdownHeaders());
@@ -3343,22 +3570,21 @@ function handleLiveMouseUp(e) {
   requestAnimationFrame(() => {
     if (currentViewMode !== 'live') return;
 
-    const currentIndex = getCurrentBlockIndex();
-    if (currentIndex === -1) return;
+    const currentBlock = getCurrentLiveBlock();
+    if (!currentBlock) return;
 
-    if (lastActiveBlockIndex !== -1 && currentIndex !== lastActiveBlockIndex) {
+    if (lastActiveBlock && currentBlock !== lastActiveBlock) {
       // Only re-render the previous block if user actually typed in it
-      if (modifiedBlockIndices.has(lastActiveBlockIndex)) {
-        const prevBlock = previewContent.children[lastActiveBlockIndex];
-        if (prevBlock) {
-          reRenderSingleBlock(prevBlock);
+      if (liveEditedBlocks.has(lastActiveBlock)) {
+        liveEditedBlocks.delete(lastActiveBlock);
+        if (previewContent.contains(lastActiveBlock)) {
+          reRenderSingleBlock(lastActiveBlock);
         }
-        modifiedBlockIndices.delete(lastActiveBlockIndex);
       }
       syncLiveContentToTextarea();
-      lastActiveBlockIndex = getCurrentBlockIndex();
+      lastActiveBlock = getCurrentLiveBlock();
     } else {
-      lastActiveBlockIndex = currentIndex;
+      lastActiveBlock = currentBlock;
     }
   });
 }
@@ -3368,16 +3594,32 @@ function isEmptyLiveBlock(node) {
   if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
   if (node.nodeName !== 'P' && node.nodeName !== 'DIV') return false;
 
+  // Cheap reject first: cloning every block on every serialize is itself O(document).
+  if ((node.textContent || '').replace(/\u00a0/g, '').trim() !== '') return false;
+
   const clone = node.cloneNode(true);
   clone.querySelectorAll('br').forEach(br => br.remove());
-  const text = (clone.textContent || '').replace(/\u00a0/g, '').trim();
   const hasVisibleMedia = Boolean(clone.querySelector('img, video, audio, iframe, table, hr, input, svg, canvas'));
-  return text === '' && !hasVisibleMedia;
+  return !hasVisibleMedia;
+}
+
+function getLiveBlockMarkdown(node) {
+  if (liveMutationObserver && !liveDirtyBlocks.has(node) && liveBlockMarkdownCache.has(node)) {
+    return liveBlockMarkdownCache.get(node);
+  }
+  const markdown = turndownService.turndown(node.outerHTML).trim();
+  liveBlockMarkdownCache.set(node, markdown);
+  liveDirtyBlocks.delete(node);
+  return markdown;
 }
 
 function serializeLiveEditMarkdown() {
+  flushLiveMutations();
+
   const blocks = Array.from(previewContent.childNodes).map(node => {
     if (isEmptyLiveBlock(node)) {
+      liveBlockMarkdownCache.delete(node);
+      liveDirtyBlocks.delete(node);
       return EMPTY_LINE_MARKDOWN;
     }
 
@@ -3386,11 +3628,14 @@ function serializeLiveEditMarkdown() {
     }
 
     if (node.nodeType === Node.ELEMENT_NODE) {
-      return turndownService.turndown(node.outerHTML).trim();
+      return getLiveBlockMarkdown(node);
     }
 
     return '';
   }).filter(Boolean);
+
+  // Blocks left dirty here are no longer in the document.
+  liveDirtyBlocks.clear();
 
   // A single browser-created empty paragraph means the document is empty.
   if (blocks.length === 1 && blocks[0] === EMPTY_LINE_MARKDOWN) {
@@ -3398,6 +3643,29 @@ function serializeLiveEditMarkdown() {
   }
 
   return blocks.join('\n\n');
+}
+
+// Word counts and the outline both rebuild DOM from the whole document. They are
+// display-only, so they run once typing pauses instead of on every keystroke —
+// mirroring what the plain textarea path already does with its render debounce.
+const LIVE_STATS_DEBOUNCE_MS = 120;
+let liveStatsTimer = null;
+
+function scheduleLiveDerivedUpdates() {
+  clearTimeout(liveStatsTimer);
+  liveStatsTimer = setTimeout(() => {
+    liveStatsTimer = null;
+    updateStats();
+    generateOutline();
+  }, LIVE_STATS_DEBOUNCE_MS);
+}
+
+function flushPendingLiveDerivedUpdates() {
+  if (liveStatsTimer === null) return;
+  clearTimeout(liveStatsTimer);
+  liveStatsTimer = null;
+  updateStats();
+  generateOutline();
 }
 
 function syncLiveContentToTextarea() {
@@ -3409,25 +3677,42 @@ function syncLiveContentToTextarea() {
     markdownTextarea.value = markdown;
     isModified = true;
     unsavedIndicator.style.display = 'inline-block';
-    updateStats();
-    generateOutline();
+    scheduleLiveDerivedUpdates();
   }
 }
 
 function handleLiveEditInput() {
   // Only sync HTML→Markdown, do NOT re-render while user is typing
   syncLiveContentToTextarea();
-  requestAnimationFrame(updateLiveScrollControls);
+  scheduleLiveViewportUpdate();
   // Mark the current block as modified so it gets re-rendered when user clicks away
-  const idx = getCurrentBlockIndex();
-  if (idx !== -1) {
-    modifiedBlockIndices.add(idx);
+  const block = getCurrentLiveBlock();
+  if (block) liveEditedBlocks.add(block);
+}
+
+// The plain textarea already forces plain-text paste; the contentEditable did not,
+// so clipboard HTML from a browser went straight into the document unsanitised —
+// span/style soup that Turndown mangles, and a large paste that floods the DOM.
+function handleLivePaste(e) {
+  const clipboard = e.clipboardData || window.clipboardData;
+  if (!clipboard) return;
+
+  e.preventDefault();
+  // A paste is its own undo step, never merged into the surrounding typing run.
+  breakHistoryCoalescing();
+
+  const plainText = clipboard.getData('text/plain');
+  if (plainText) {
+    // execCommand keeps the browser's own caret and selection handling, and still
+    // fires beforeinput/input so history and the block cache stay in step.
+    document.execCommand('insertText', false, plainText);
   }
+  breakHistoryCoalescing();
 }
 
 function handleLiveBeforeInput(e) {
   if (!isRestoringHistory && !(e.inputType || '').startsWith('history')) {
-    recordEditorState();
+    recordEditorState(e.inputType, e.data);
   }
 }
 
@@ -3439,8 +3724,17 @@ function handleLiveEditBlur(e) {
 
   const cursorSelection = window.getSelection();
   if (!previewContent.contains(cursorSelection.anchorNode)) {
+    // Leaving the editor ends the current typing run, so the next edit starts a
+    // fresh undo step rather than merging into the one before the blur.
+    breakHistoryCoalescing();
+    // The rebuild resets the container's scroll, which reads as the page jumping
+    // around when focus comes back. Put it back where the reader left it.
+    const scrollTop = previewContainer.scrollTop;
     syncLiveContentToTextarea();
+    flushPendingLiveDerivedUpdates();
     renderLiveEditMode();
+    previewContainer.scrollTop = scrollTop;
+    scheduleLiveViewportUpdate();
   }
 }
 
