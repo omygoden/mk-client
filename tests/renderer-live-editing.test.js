@@ -58,10 +58,13 @@ test('merges a run of typed characters into a single undo step', () => {
   harness.context.setViewMode('edit');
 
   textarea.value = 'a';
+  textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
   harness.context.recordEditorState('insertText', 'a');
   textarea.value = 'ab';
+  textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
   harness.context.recordEditorState('insertText', 'b');
   textarea.value = 'abc';
+  textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
   harness.context.recordEditorState('insertText', 'c');
   textarea.value = 'abcd';
 
@@ -76,14 +79,66 @@ test('ends the undo group at a whitespace keystroke', () => {
   harness.context.setViewMode('edit');
 
   textarea.value = 'ab';
+  textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
   harness.context.recordEditorState('insertText', 'b');
   textarea.value = 'ab ';
+  textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
   harness.context.recordEditorState('insertText', ' ');
   textarea.value = 'ab c';
 
   harness.context.undoEditorChange();
 
   assert.equal(textarea.value, 'ab ');
+});
+
+test('moving the caret elsewhere ends the typing run', () => {
+  const harness = createRendererHarness();
+  const textarea = harness.elements.get('markdown-textarea');
+  harness.context.setViewMode('edit');
+
+  textarea.value = 'ab';
+  textarea.selectionStart = textarea.selectionEnd = 1;
+  harness.context.recordEditorState('insertText', 'X');
+  textarea.value = 'aXb';
+  textarea.selectionStart = textarea.selectionEnd = 2;
+
+  // The caret jumps to the end of the document (a click, an arrow key) and typing
+  // continues inside the same coalescing window. The two edits are in unrelated
+  // places, so one Ctrl+Z must not undo both.
+  textarea.selectionStart = textarea.selectionEnd = 3;
+  harness.context.recordEditorState('insertText', 'Y');
+  textarea.value = 'aXbY';
+
+  harness.context.undoEditorChange();
+  assert.equal(textarea.value, 'aXb');
+
+  harness.context.undoEditorChange();
+  assert.equal(textarea.value, 'ab');
+});
+
+test('backspacing over a line break ends the deletion run', () => {
+  const harness = createRendererHarness();
+  const textarea = harness.elements.get('markdown-textarea');
+  harness.context.setViewMode('edit');
+
+  textarea.value = 'a\nb';
+  textarea.selectionStart = textarea.selectionEnd = 3;
+  harness.context.recordEditorState('deleteContentBackward', null);
+  textarea.value = 'a\n';
+  textarea.selectionStart = textarea.selectionEnd = 2;
+
+  // Deleting the line break joins two lines. e.data is null for deletions, so the
+  // whitespace rule has to read the character being removed from the document —
+  // otherwise merging the lines lands in the same undo step as deleting 'b'.
+  harness.context.recordEditorState('deleteContentBackward', null);
+  textarea.value = 'a';
+  textarea.selectionStart = textarea.selectionEnd = 1;
+
+  harness.context.undoEditorChange();
+  assert.equal(textarea.value, 'a\n');
+
+  harness.context.undoEditorChange();
+  assert.equal(textarea.value, 'a\nb');
 });
 
 test('never merges a toolbar action into the surrounding typing run', () => {

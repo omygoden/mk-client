@@ -125,6 +125,7 @@ function createRendererHarness(options = {}) {
   const selection = {
     rangeCount: 0,
     anchorNode: null,
+    isCollapsed: true,
     removeAllRanges() {
       this.rangeCount = 0;
       this.anchorNode = null;

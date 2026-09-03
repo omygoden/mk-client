@@ -1274,29 +1274,99 @@ const COALESCABLE_INPUT_TYPES = new Set([
 ]);
 let lastHistoryRecordAt = 0;
 let lastHistoryInputType = '';
+// Where the previous keystroke left the caret. A run only continues while the
+// next edit starts exactly there: without this, typing a character, clicking
+// somewhere else and typing again within the coalescing window collapsed both
+// edits into one undo step, so a single Ctrl+Z reverted two unrelated places.
+let lastHistoryAnchorNode = null;
+let lastHistoryAnchorOffset = -1;
 
 function breakHistoryCoalescing() {
   lastHistoryRecordAt = 0;
   lastHistoryInputType = '';
+  lastHistoryAnchorNode = null;
+  lastHistoryAnchorOffset = -1;
 }
 
-function shouldCoalesceHistory(inputType, data) {
+// The edit position as a (node, offset) pair rather than a document offset:
+// comparing nodes costs nothing on a large document, and a structural edit —
+// splitting or joining paragraphs — changes the node, which is exactly where a
+// typing run has to end.
+function getEditAnchor() {
+  if (currentViewMode === 'live') {
+    const selection = window.getSelection();
+    if (!selection || !selection.rangeCount || !selection.isCollapsed) return null;
+    if (!selection.anchorNode || !previewContent.contains(selection.anchorNode)) return null;
+    return { node: selection.anchorNode, offset: selection.anchorOffset };
+  }
+  if (markdownTextarea.selectionStart !== markdownTextarea.selectionEnd) return null;
+  return { node: markdownTextarea, offset: markdownTextarea.selectionStart };
+}
+
+// beforeinput reports e.data as null for deletions, so the character that ends
+// the undo group has to be read out of the document. An empty result means the
+// deletion crosses a node or document boundary — joining two lines or two
+// blocks — which always ends the group.
+function getDeletedText(inputType, anchor) {
+  if (!anchor) return '';
+  const text = anchor.node === markdownTextarea
+    ? markdownTextarea.value
+    : (anchor.node.textContent || '');
+  if (inputType === 'deleteContentBackward') {
+    return anchor.offset > 0 ? text.charAt(anchor.offset - 1) : '';
+  }
+  if (inputType === 'deleteContentForward') {
+    return anchor.offset < text.length ? text.charAt(anchor.offset) : '';
+  }
+  return '';
+}
+
+// Where this edit will leave the caret, so the next keystroke can tell "kept
+// typing here" from "moved and typed somewhere else".
+function projectAnchorAfterEdit(anchor, inputType, data) {
+  if (!anchor) return { node: null, offset: -1 };
+  if (inputType === 'deleteContentBackward') {
+    return { node: anchor.node, offset: Math.max(0, anchor.offset - 1) };
+  }
+  if (inputType === 'deleteContentForward') return anchor;
+  const insertedLength = typeof data === 'string' ? data.length : 0;
+  return { node: anchor.node, offset: anchor.offset + insertedLength };
+}
+
+function shouldCoalesceHistory(inputType, data, anchor) {
   if (!inputType || !COALESCABLE_INPUT_TYPES.has(inputType)) return false;
   if (inputType !== lastHistoryInputType) return false;
+  if (Date.now() - lastHistoryRecordAt >= HISTORY_COALESCE_MS) return false;
+
   // A space or newline ends the current word, so it also ends the undo group.
-  if (typeof data === 'string' && /\s/.test(data)) return false;
-  return Date.now() - lastHistoryRecordAt < HISTORY_COALESCE_MS;
+  const edited = inputType.startsWith('delete') ? getDeletedText(inputType, anchor) : data;
+  if (typeof edited === 'string' && (edited === '' || /\s/.test(edited))) return false;
+
+  if (!anchor || anchor.node !== lastHistoryAnchorNode) return false;
+  // Composition offsets move in ways only the IME knows, so a composing run only
+  // has to stay inside the same node.
+  if (inputType === 'insertCompositionText') return true;
+  return anchor.offset === lastHistoryAnchorOffset;
 }
 
 function recordEditorState(inputType = '', data = null) {
   if (isRestoringHistory) return;
 
-  if (shouldCoalesceHistory(inputType, data)) {
+  const anchor = getEditAnchor();
+  const projected = COALESCABLE_INPUT_TYPES.has(inputType)
+    ? projectAnchorAfterEdit(anchor, inputType, data)
+    : { node: null, offset: -1 };
+
+  if (shouldCoalesceHistory(inputType, data, anchor)) {
     lastHistoryRecordAt = Date.now();
+    lastHistoryAnchorNode = projected.node;
+    lastHistoryAnchorOffset = projected.offset;
     return;
   }
   lastHistoryInputType = COALESCABLE_INPUT_TYPES.has(inputType) ? inputType : '';
   lastHistoryRecordAt = Date.now();
+  lastHistoryAnchorNode = projected.node;
+  lastHistoryAnchorOffset = projected.offset;
 
   const state = captureEditorState();
   const previous = editorHistory.peekUndo();
@@ -3193,6 +3263,27 @@ async function exportHtml() {
 
 let turndownService = null;
 
+// Walks parents rather than using closest(): Turndown hands its rules nodes from
+// its own DOM implementation, where only the tree links are guaranteed.
+function isInsideHeading(node) {
+  for (let current = node && node.parentNode; current; current = current.parentNode) {
+    if (/^H[1-6]$/.test(current.nodeName || '')) return true;
+  }
+  return false;
+}
+
+// Other breaks alongside this one are skipped: a run of trailing <br> is still
+// just a placeholder, and the caller only asks about content around it.
+function hasSiblingContent(node, direction) {
+  const step = direction === 'before' ? 'previousSibling' : 'nextSibling';
+  for (let sibling = node[step]; sibling; sibling = sibling[step]) {
+    if (sibling.nodeName === 'BR') continue;
+    if (sibling.nodeType === 1) return true;
+    if ((sibling.textContent || '').trim() !== '') return true;
+  }
+  return false;
+}
+
 function initTurndown() {
   if (!turndownService && typeof TurndownService !== 'undefined') {
     turndownService = new TurndownService({
@@ -3210,10 +3301,24 @@ function initTurndown() {
     // Rendering runs with breaks:true, so a plain newline already round-trips to
     // <br>. Turndown's default "  \n" would silently add trailing spaces to every
     // soft line break in the source on each live re-render.
+    // That equivalence holds inside a paragraph only. A Markdown heading ends at
+    // the line break, so serialising a heading's <br> as "\n" moves the rest of
+    // the heading into a block of its own: the break the user just deleted comes
+    // back as a paragraph split on the next render, and an otherwise empty
+    // heading serialises to a bare "#" and loses its content. Inside a heading
+    // the break has to stay literal HTML, which marked passes through unchanged.
     turndownService.addRule('lineBreak', {
       filter: 'br',
-      replacement: function () {
-        return '\n';
+      replacement: function (_content, node) {
+        if (!isInsideHeading(node)) return '\n';
+        // Chromium parks a placeholder <br> at the end of a block so the last
+        // line stays visible; a paragraph loses it to the trailing trim, but a
+        // literal <br> would make it permanent. A break that is all the heading
+        // has left still has to survive, or the heading serialises to a bare "#"
+        // and marked drops it on the next render.
+        const isPlaceholder = hasSiblingContent(node, 'before') &&
+          !hasSiblingContent(node, 'after');
+        return isPlaceholder ? '' : '<br>';
       }
     });
 
