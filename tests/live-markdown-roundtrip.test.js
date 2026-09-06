@@ -62,3 +62,36 @@ test('drops the placeholder break Chromium parks at the end of a heading', () =>
   assert.equal(toMarkdown('<h1>标题<br></h1>'), '# 标题');
   assert.equal(toMarkdown('<h1>标题<br><br></h1>'), '# 标题');
 });
+
+// A file's trailing newlines are padding written by whatever tool saved it, not
+// a blank line the author typed. Rendering them as an editable empty paragraph
+// meant the next save wrote that line into the file for real — so the phantom
+// blank line spread from the file that had it to every file opened after it.
+function createParser() {
+  const harness = createRendererHarness({ contextOverrides: { TurndownService, marked } });
+  harness.context.configureMarkdownRenderer();
+  return (markdown) => harness.context.parseMarkdownPreservingEmptyLines(markdown);
+}
+
+test('newlines at the end of a file do not render as a blank line', () => {
+  const parse = createParser();
+
+  for (const source of ['正文\n', '正文\n\n', '正文\n\n\n', '正文\n\n\n\n\n']) {
+    assert.equal(parse(source).trim(), '<p>正文</p>', `unexpected render for ${JSON.stringify(source)}`);
+  }
+});
+
+test('a blank line between two paragraphs is still preserved', () => {
+  const parse = createParser();
+
+  assert.equal(parse('段一\n\n\n段二\n').trim(), '<p>段一</p>\n<p><br></p>\n\n<p>段二</p>');
+});
+
+test('drops the trailing placeholder an older save left in the file', () => {
+  const parse = createParser();
+
+  // Files saved before this fix end with a literal placeholder paragraph. Left in
+  // place it renders as the same phantom blank line, so it is cleaned on open.
+  assert.equal(parse('正文\n\n<p><br></p>').trim(), '<p>正文</p>');
+  assert.equal(parse('正文\n\n<p>&nbsp;</p>').trim(), '<p>正文</p>');
+});

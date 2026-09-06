@@ -443,3 +443,93 @@ test('skips rebuilding the heading nav when the headings are unchanged', () => {
   harness.context.renderLiveHeadingNav([{ level: 2, text: 'Title', lineIndex: 0 }]);
   assert.equal(rebuilds, 2);
 });
+
+test('never writes a trailing blank line back into the document', () => {
+  const harness = createRendererHarness({
+    contextOverrides: {
+      TurndownService: function TurndownService() {
+        return { addRule() {}, turndown: (html) => html.replace(/<[^>]+>/g, '') };
+      }
+    }
+  });
+
+  const preview = harness.elements.get('preview-content');
+  const textarea = harness.elements.get('markdown-textarea');
+  textarea.value = 'one';
+  harness.context.setViewMode('live');
+
+  const paragraph = createLiveBlock('one', preview);
+  // Chromium parks an empty paragraph after the last block of a contentEditable.
+  // Serialising it used to add a blank line that came back as real content on the
+  // next open, so every edit grew the document by another trailing blank line.
+  const trailingBlank = createLiveBlock('', preview);
+  preview.childNodes = [paragraph, trailingBlank];
+  preview.children = [paragraph, trailingBlank];
+
+  assert.equal(harness.context.serializeLiveEditMarkdown(), 'one');
+});
+
+test('keeps a blank line the user left between two paragraphs', () => {
+  const harness = createRendererHarness({
+    contextOverrides: {
+      TurndownService: function TurndownService() {
+        return { addRule() {}, turndown: (html) => html.replace(/<[^>]+>/g, '') };
+      }
+    }
+  });
+
+  const preview = harness.elements.get('preview-content');
+  harness.elements.get('markdown-textarea').value = 'one';
+  harness.context.setViewMode('live');
+
+  const first = createLiveBlock('one', preview);
+  const gap = createLiveBlock('', preview);
+  const second = createLiveBlock('two', preview);
+  preview.childNodes = [first, gap, second];
+  preview.children = [first, gap, second];
+
+  assert.equal(harness.context.serializeLiveEditMarkdown(), 'one\n\n<p><br></p>\n\ntwo');
+});
+
+test('carries the source file\'s own trailing newline through an edit', () => {
+  const harness = createRendererHarness({
+    contextOverrides: {
+      TurndownService: function TurndownService() {
+        return { addRule() {}, turndown: (html) => html.replace(/<[^>]+>/g, '') };
+      }
+    }
+  });
+
+  const preview = harness.elements.get('preview-content');
+  const textarea = harness.elements.get('markdown-textarea');
+  // The rendered view cannot show or edit the newline a file ends with, so
+  // dropping it reported unsaved changes on a file that was only ever opened.
+  textarea.value = 'one\n';
+  harness.context.setViewMode('live');
+
+  const paragraph = createLiveBlock('one', preview);
+  preview.childNodes = [paragraph];
+  preview.children = [paragraph];
+
+  assert.equal(harness.context.serializeLiveEditMarkdown(), 'one\n');
+});
+
+test('an emptied document serialises to nothing, not to a blank line', () => {
+  const harness = createRendererHarness({
+    contextOverrides: {
+      TurndownService: function TurndownService() {
+        return { addRule() {}, turndown: (html) => html.replace(/<[^>]+>/g, '') };
+      }
+    }
+  });
+
+  const preview = harness.elements.get('preview-content');
+  harness.elements.get('markdown-textarea').value = 'one\n';
+  harness.context.setViewMode('live');
+
+  const onlyBlock = createLiveBlock('', preview);
+  preview.childNodes = [onlyBlock];
+  preview.children = [onlyBlock];
+
+  assert.equal(harness.context.serializeLiveEditMarkdown(), '');
+});

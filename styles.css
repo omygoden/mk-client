@@ -480,6 +480,45 @@ body {
   stroke: var(--bg-secondary);
 }
 
+/* Sidebar drag-to-resize grip. It sits in the flex row rather than floating over
+   the sidebar so the workspace shrinks with it and nothing overlaps the tree. */
+.sidebar-resizer {
+  width: 5px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background-color: transparent;
+  position: relative;
+  z-index: 5;
+  transition: background-color 0.15s ease;
+}
+.sidebar-resizer::after {
+  /* Widen only the pointer target, not the visible gutter: a 5px strip is hard
+     to grab, but a 5px gap is all the layout should give up. */
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -2px;
+  right: -2px;
+}
+.sidebar-resizer:hover,
+.sidebar-resizer.resizing {
+  background-color: var(--accent-color);
+}
+.sidebar.collapsed + .sidebar-resizer {
+  display: none;
+}
+
+/* While dragging, the width must track the pointer exactly — the sidebar's own
+   width transition would make it lag a few frames behind the cursor. */
+body.sidebar-resizing .sidebar {
+  transition: background-color var(--transition-speed) ease, border-color var(--transition-speed) ease;
+}
+body.sidebar-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
 /* Expand Sidebar handle */
 .sidebar-expand-handle {
   position: absolute;
@@ -577,14 +616,20 @@ body {
 .tree-node.dragging {
   opacity: 0.5;
 }
-.tree-node.active i {
+.tree-node.active i,
+.tree-node.active svg {
   stroke: var(--bg-primary);
 }
 .tree-node.directory {
   color: var(--text-heading);
   font-weight: 600;
 }
-.tree-node i {
+/* Lucide swaps each <i data-lucide> for an <svg> that keeps the element's
+   classes but not its tag, so every icon rule has to name the <svg> too —
+   otherwise the icon falls back to Lucide's own 24px attributes and, being a
+   shrinkable flex item, gets squeezed thinner the longer the file name is. */
+.tree-node i,
+.tree-node svg {
   width: 14px;
   height: 14px;
   color: var(--text-muted);
@@ -594,6 +639,7 @@ body {
 .tree-node .node-spacer {
   width: 12px;
   height: 12px;
+  flex-shrink: 0;
 }
 .tree-node .node-spacer {
   opacity: 0;
@@ -610,12 +656,14 @@ body {
   color: var(--accent-hover);
 }
 .tree-node .node-name {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.tree-node.active i {
+.tree-node.active i,
+.tree-node.active svg {
   color: var(--bg-primary);
 }
 .tree-node-indent {

@@ -12,7 +12,7 @@ let bodyElement, themeDropdown, btnZoomIn, btnZoomOut, btnZoomReset, zoomLevel;
 let markdownTextarea, previewContainer, previewContent, editorContainer;
 let liveScrollControls, liveHeadingNav, btnScrollTop, btnScrollBottom;
 let currentFilename, unsavedIndicator, dirTree, outlineView, currentFilepathStatus, paneSortContainer, sortDropdown, btnRefreshSidebar;
-let appSidebar, sidebarExpandHandle, btnToggleSidebar, tabFiles, tabOutline, paneFiles, paneOutline;
+let appSidebar, sidebarExpandHandle, sidebarResizer, btnToggleSidebar, tabFiles, tabOutline, paneFiles, paneOutline;
 let btnNewFile, btnOpenFile, btnSaveFile, btnModeEdit, btnModeSplit, btnModePreview, btnModeLive, btnExportPdf, btnExportHtml;
 let btnRecent, recentMenu, recentList, btnClearRecent;
 let contextMenu, ctxRefreshSidebar, ctxOpenItem, ctxShowInFolder, ctxCopyPath, ctxCreateMarkdownFile, ctxCreateFolder, ctxRenameItem, ctxDeleteItem;
@@ -55,6 +55,13 @@ const APP_ZOOM_STEP = 10;
 const APP_ZOOM_MIN = 50;
 const APP_ZOOM_MAX = 200;
 let appZoomPercent = 100;
+const SIDEBAR_WIDTH_STORAGE_KEY = 'sidebar-width';
+const SIDEBAR_WIDTH_DEFAULT = 260;
+const SIDEBAR_WIDTH_MIN = 160;
+const SIDEBAR_WIDTH_MAX = 640;
+// However wide the window is, the editor keeps at least this much room, so a
+// drag (or a width restored on a smaller screen) can never swallow the document.
+const WORKSPACE_MIN_WIDTH = 320;
 const RECENT_ITEMS_STORAGE_KEY = 'recent-open-items';
 const MAX_RECENT_ITEMS = 12;
 const EMPTY_LINE_MARKDOWN = '<p><br></p>';
@@ -88,6 +95,7 @@ function initDOMReferences() {
   btnRefreshSidebar = document.getElementById('btn-refresh-sidebar');
   appSidebar = document.getElementById('app-sidebar');
   sidebarExpandHandle = document.getElementById('sidebar-expand-handle');
+  sidebarResizer = document.getElementById('sidebar-resizer');
   btnToggleSidebar = document.getElementById('btn-toggle-sidebar');
   tabFiles = document.getElementById('tab-files');
   tabOutline = document.getElementById('tab-outline');
@@ -226,10 +234,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Load saved app-wide zoom before wiring events so the UI starts at the user's preferred scale.
   applySavedAppZoom();
+  applySavedSidebarWidth();
   renderRecentItems();
 
   // 4. Setup Event Listeners
   setupEventListeners();
+  setupSidebarResizer();
   setupExternalFileOpenListener();
   setViewMode('live');
 
@@ -2109,6 +2119,104 @@ function toggleSidebar() {
   }
 }
 
+// --- Sidebar Drag-to-Resize ---
+
+// The width the user asked for, which is not always the width on screen: a narrow
+// window can force the sidebar below it. Keeping the request lets the sidebar go
+// back to its full size when the window has room again, instead of being
+// permanently trimmed by one awkward resize.
+let sidebarPreferredWidth = SIDEBAR_WIDTH_DEFAULT;
+
+// The upper bound depends on the window, so it is recomputed on every call rather
+// than cached: a width restored from a wider screen must still leave the editor
+// usable after the window is made narrower.
+function clampSidebarWidth(width) {
+  const roomForEditor = window.innerWidth - WORKSPACE_MIN_WIDTH;
+  const maxWidth = Math.max(SIDEBAR_WIDTH_MIN, Math.min(SIDEBAR_WIDTH_MAX, roomForEditor));
+  return Math.round(Math.min(maxWidth, Math.max(SIDEBAR_WIDTH_MIN, width)));
+}
+
+// Re-derives the applied width from the stored request. Nothing here measures the
+// sidebar back off the page: while its width transition is running such a read
+// returns an in-between value, which would then be committed to storage as though
+// the user had chosen it.
+function applySidebarWidth() {
+  const applied = clampSidebarWidth(sidebarPreferredWidth);
+  document.documentElement.style.setProperty('--sidebar-width', `${applied}px`);
+  return applied;
+}
+
+function setSidebarWidth(width, options = {}) {
+  const { persist = true } = options;
+  sidebarPreferredWidth = Math.round(
+    Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, width))
+  );
+  const applied = applySidebarWidth();
+  if (persist) {
+    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarPreferredWidth));
+  }
+  return applied;
+}
+
+function applySavedSidebarWidth() {
+  const saved = Number.parseInt(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY), 10);
+  setSidebarWidth(Number.isFinite(saved) ? saved : SIDEBAR_WIDTH_DEFAULT, { persist: false });
+}
+
+function setupSidebarResizer() {
+  if (!sidebarResizer) return;
+
+  let pointerId = null;
+  let startX = 0;
+  let startWidth = 0;
+  let currentWidth = 0;
+
+  const onPointerMove = (e) => {
+    if (pointerId === null || e.pointerId !== pointerId) return;
+    currentWidth = setSidebarWidth(startWidth + (e.clientX - startX), { persist: false });
+  };
+
+  const endDrag = (e) => {
+    if (pointerId === null || (e && e.pointerId !== pointerId)) return;
+    sidebarResizer.releasePointerCapture(pointerId);
+    pointerId = null;
+    sidebarResizer.classList.remove('resizing');
+    bodyElement.classList.remove('sidebar-resizing');
+    // Only the final width is worth storing; writing on every move would hit
+    // localStorage dozens of times per drag. The width is taken from the last
+    // move rather than measured back off the element, which after the class is
+    // dropped is a transitioning value.
+    setSidebarWidth(currentWidth);
+  };
+
+  sidebarResizer.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || appSidebar.classList.contains('collapsed')) return;
+    e.preventDefault();
+    pointerId = e.pointerId;
+    startX = e.clientX;
+    // The target width, not the measured one: a drag started while the width
+    // transition is still running must continue from where it is heading.
+    startWidth = clampSidebarWidth(sidebarPreferredWidth);
+    currentWidth = startWidth;
+    // Pointer capture keeps the drag alive when the cursor outruns the 5px grip,
+    // which it always does — no listeners on document to add and remove.
+    sidebarResizer.setPointerCapture(pointerId);
+    sidebarResizer.classList.add('resizing');
+    bodyElement.classList.add('sidebar-resizing');
+  });
+
+  sidebarResizer.addEventListener('pointermove', onPointerMove);
+  sidebarResizer.addEventListener('pointerup', endDrag);
+  sidebarResizer.addEventListener('pointercancel', endDrag);
+
+  sidebarResizer.addEventListener('dblclick', () => setSidebarWidth(SIDEBAR_WIDTH_DEFAULT));
+
+  // A stored width that no longer fits the window has to be pulled back in, or
+  // the editor is left with a sliver after the window is resized down. The
+  // request itself is untouched, so widening the window restores it.
+  window.addEventListener('resize', applySidebarWidth);
+}
+
 // --- View Modes Toggling ---
 function setViewMode(mode) {
   clearSplitScrollSync();
@@ -3068,13 +3176,21 @@ function renderDirectoryTree(files, container, depth = 0) {
       ? `
         <i class="node-chevron" data-lucide="${chevronName}"></i>
         <i class="node-icon" data-lucide="${iconName}"></i>
-        <span class="node-name">${file.name}</span>
+        <span class="node-name"></span>
       `
       : `
         <i class="node-spacer" data-lucide="minus"></i>
         <i class="node-icon" data-lucide="${iconName}"></i>
-        <span class="node-name">${file.name}</span>
+        <span class="node-name"></span>
       `;
+
+    // The name is written as text, not interpolated into the markup above: a
+    // file called `<img onerror=...>.md` is a legal name on disk and used to be
+    // parsed as HTML here.
+    node.querySelector('.node-name').textContent = file.name;
+    // A name too long for the sidebar is cut off with an ellipsis, so hovering
+    // the row is the only way left to read it in full.
+    node.title = file.name;
 
     container.appendChild(node);
 
@@ -3565,14 +3681,25 @@ function getCurrentLiveBlock() {
   return getTopLevelLiveBlock(node);
 }
 
+// Whitespace and blank-line placeholders parked at the very end of the source.
+// Almost every tool writes at least one trailing newline, and older saves left
+// the placeholder paragraph behind as well.
+const TRAILING_BLANK_TAIL = /(?:\s|<p>(?:\s|&nbsp;|\u00a0|<br\s*\/?>)*<\/p>)+$/i;
+
 // Parse markdown to HTML while preserving empty lines that would otherwise
 // be collapsed by marked.parse() (standard Markdown ignores extra blank lines)
 function parseMarkdownPreservingEmptyLines(markdown) {
   if (!markdown.trim()) return '<p><br></p>';
 
+  // Newlines at the end of a file are padding, not content. Expanding them below
+  // would render a blank line the document never had, and serialising sent that
+  // line straight back into the file — so once one document picked up a trailing
+  // blank line, every document saved afterwards grew one too.
+  const body = markdown.replace(TRAILING_BLANK_TAIL, '');
+
   // Detect runs of 3+ newlines in older files and upgrade them to explicit
   // HTML paragraphs. Markdown normally collapses these runs.
-  const processed = markdown.replace(/\n{3,}/g, (match) => {
+  const processed = body.replace(/\n{3,}/g, (match) => {
     const extraBlanks = Math.max(1, Math.floor((match.length - 1) / 2));
     let result = '\n\n';
     for (let i = 0; i < extraBlanks; i++) {
@@ -3598,9 +3725,15 @@ function handleEmptyLiveAreaMouseDown(event) {
   setCaretCharOffset(previewContent, 0);
 }
 
+// Whitespace the source file ends with. The rendered document has no way to show
+// it and no way to edit it, so it is set aside at render time and appended again
+// on serialise rather than being silently stripped out of the user's file.
+let liveTrailingWhitespace = '';
+
 function renderLiveEditMode() {
   initTurndown();
   const markdownText = markdownTextarea.value;
+  liveTrailingWhitespace = markdownText.trim() ? (/\s*$/.exec(markdownText)[0]) : '';
   previewContent.classList.add('live-edit-mode');
 
   // Enable contenteditable for the entire area
@@ -3749,12 +3882,21 @@ function serializeLiveEditMarkdown() {
   // Blocks left dirty here are no longer in the document.
   liveDirtyBlocks.clear();
 
-  // A single browser-created empty paragraph means the document is empty.
-  if (blocks.length === 1 && blocks[0] === EMPTY_LINE_MARKDOWN) {
-    return '';
+  // Blank lines at the end are never written back. Chromium parks an empty
+  // paragraph after the last block of a contentEditable, and the placeholder it
+  // serialises to would be read back as real content on the next open — the
+  // document gaining one more trailing blank line every time it is edited.
+  // This also drops an empty document down to '' (its one browser-made
+  // paragraph is exactly such a trailing blank).
+  while (blocks.length > 0 && blocks[blocks.length - 1] === EMPTY_LINE_MARKDOWN) {
+    blocks.pop();
   }
+  if (blocks.length === 0) return '';
 
-  return blocks.join('\n\n');
+  // The source's own trailing newline is invisible in the rendered view, so it
+  // cannot have been edited there. Carrying it through unchanged keeps merely
+  // opening a file and clicking away from reporting unsaved changes.
+  return blocks.join('\n\n') + liveTrailingWhitespace;
 }
 
 // Word counts and the outline both rebuild DOM from the whole document. They are
