@@ -3957,8 +3957,13 @@ function handleLivePaste(e) {
 
   const plainText = clipboard.getData('text/plain');
   if (plainText) {
-    // execCommand keeps the browser's own caret and selection handling, and still
-    // fires beforeinput/input so history and the block cache stay in step.
+    // Chromium fires input but NOT beforeinput for execCommand, and the live
+    // editor's history hangs off beforeinput — so a paste never reached the undo
+    // stack. Pasting over a selection replaced the whole document with no way
+    // back. Record the pre-paste state here, the way the textarea paste does.
+    recordEditorState();
+    // execCommand keeps the browser's own caret and selection handling, and
+    // fires input so the block cache stays in step.
     if (/\r?\n/.test(plainText)) {
       // Chromium's insertText splits the text on every newline into its own block,
       // so each blank line between paragraphs lands as an empty block that

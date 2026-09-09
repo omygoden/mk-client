@@ -533,3 +533,21 @@ test('an emptied document serialises to nothing, not to a blank line', () => {
 
   assert.equal(harness.context.serializeLiveEditMarkdown(), '');
 });
+
+test('records the pre-paste document so Ctrl+Z can undo a paste', () => {
+  const harness = createLiveHarness();
+  harness.context.setViewMode('live');
+  const textarea = harness.document.getElementById('markdown-textarea');
+  textarea.value = '# Original\n\nOriginal body.';
+  harness.context.resetEditorHistory();
+
+  // execCommand does not fire beforeinput in Chromium, so the live editor's
+  // beforeinput-driven history never sees a paste. Without an explicit record,
+  // pasting over a selection destroys the document with no way back.
+  pasteInto(harness, 'replacement');
+  textarea.value = 'replacement';
+
+  harness.context.undoEditorChange();
+
+  assert.equal(textarea.value, '# Original\n\nOriginal body.');
+});
